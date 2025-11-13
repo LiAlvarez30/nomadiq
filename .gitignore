@@ -1,0 +1,19 @@
+# Archivos del sistema de macOS
+.DS_Store
+
+# Variables de entorno (claves privadas, tokens, etc.)
+.env
+secrets/
+
+# Dependencias de Node.js (no se suben, se instalan con npm install)
+node_modules/
+
+# Historiales y backups automáticos del editor
+.history/
+.lh/
+.vscode/
+
+# Logs y archivos temporales
+npm-debug.log
+yarn-error.log
+pnpm-debug.log
