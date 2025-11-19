@@ -25,6 +25,31 @@ import {
   deleteItinerary
 } from '../services/itineraryService.js';
 
+// -----------------------------------------------------------------------------
+// Helpers de autenticación / ownership
+// -----------------------------------------------------------------------------
+// Esta función centraliza la obtención del usuario autenticado a partir
+// de req.user (inyectado por authMiddleware) y nos dice también si
+// el usuario tiene rol de administrador.
+//
+// La usamos en los handlers para decidir si:
+//  - puede ver/editar/eliminar un recurso propio
+//  - o si, por ser admin, puede ver todo.
+//
+function getAuthContext(req) {
+  // Usuario completo que dejó el authMiddleware (puede incluir id, email, role, name).
+  const user = req.user || null;
+
+  // ID del usuario autenticado (si existe).
+  const userId = user?.id || null;
+
+  // Flag booleano que indica si el usuario es administrador.
+  const isAdmin = user?.role === 'admin';
+
+  return { user, userId, isAdmin };
+}
+
+
 //
 // -----------------------------------------------------------------------------
 // PEQUEÑAS FUNCIONES DE AYUDA PARA SEGURIDAD / OWNERSHIP

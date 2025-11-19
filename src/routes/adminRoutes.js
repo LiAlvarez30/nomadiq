@@ -28,7 +28,7 @@ import { adminMiddleware } from '../middlewares/adminMiddleware.js';
 // Controladores que implementan la lógica de cada endpoint.
 import {
   listUsers,
-  listTrips
+  listTripsAdmin
 } from '../controllers/adminController.js';
 
 // Creamos una instancia de Router específica para la zona /admin.
@@ -77,7 +77,7 @@ router.get(
   '/trips',
   authMiddleware,
   adminMiddleware,
-  listTrips
+  listTripsAdmin
 );
 
 // Exportamos el router para montarlo en index.js como:
