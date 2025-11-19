@@ -21,7 +21,9 @@ import activityRoutes from './src/routes/activityRoutes.js';
 import tripRoutes from './src/routes/tripRoutes.js';
 import itineraryRoutes from './src/routes/itineraryRoutes.js';
 import uploadRoutes from './src/routes/uploadRoutes.js';
+import adminRoutes from './src/routes/adminRoutes.js';
 import { UPLOADS_DIR } from './src/config/multerConfig.js';
+import { authLimiter } from './src/middlewares/rateLimitMiddleware.js';
 
 
 
@@ -76,7 +78,7 @@ app.get('/', (_req, res) => {
 
 // Grupo de rutas de autenticación (registro, login, refresh, etc.).
 // Todas cuelgan de /auth.
-app.use('/auth', authRoutes);
+app.use('/auth', authLimiter, authRoutes);
 
 // Grupo de rutas relacionadas con usuarios (perfil, etc.).
 // Todas cuelgan de /users.
@@ -100,6 +102,10 @@ app.use('/api/itineraries', itineraryRoutes);
 
 // Ruta base para uploads
 app.use('/api/uploads', uploadRoutes);
+
+// Rutas de administración (solo para usuarios con rol "admin").
+app.use('/admin', adminRoutes);
+
 
 // -------------------------
 // TEST DE FIRESTORE

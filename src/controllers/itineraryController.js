@@ -5,15 +5,9 @@ import { z } from 'zod';
 import { enrichItineraryWithAI } from '../services/itineraryAiService.js';
 
 // Importamos getTripById para poder recuperar información del viaje
-// asociado al itinerario (título, intereses, etc.).
+// asociado al itinerario (título, intereses, etc.) y, AHORA TAMBIÉN,
+// para verificar que el itinerario pertenece al usuario autenticado.
 import { getTripById } from '../services/tripService.js';
-
-// Controlador de Itinerarios
-// --------------------------
-// Este archivo define las funciones que responden a las rutas HTTP
-// relacionadas con la entidad "itineraries". Aquí no se habla con Firestore
-// directamente, sino a través del servicio (itineraryService) y se usan
-// los modelos (itineraryModel) para validar y formatear los datos.
 
 // Importamos los esquemas de validación y el normalizador de salida.
 import {
@@ -32,6 +26,80 @@ import {
 } from '../services/itineraryService.js';
 
 //
+// -----------------------------------------------------------------------------
+// PEQUEÑAS FUNCIONES DE AYUDA PARA SEGURIDAD / OWNERSHIP
+// -----------------------------------------------------------------------------
+
+// Esta función nos devuelve de forma segura el userId y el role
+// del usuario autenticado (inyectado por authMiddleware).
+function getAuthInfo(req) {
+  return {
+    userId: req.user?.id || null,
+    role: req.user?.role || 'user'
+  };
+}
+
+// Esta función verifica que el trip exista y que pertenezca al usuario
+// autenticado, salvo que el usuario tenga rol "admin".
+// Devuelve un objeto con { ok, status, errorCode, trip } para que el
+// controlador pueda decidir qué respuesta enviar.
+async function checkTripOwnership({ tripId, req }) {
+  const { userId, role } = getAuthInfo(req);
+
+  // Si por alguna razón no hay usuario autenticado, devolvemos 401.
+  if (!userId) {
+    return {
+      ok: false,
+      status: 401,
+      errorCode: 'UNAUTHORIZED',
+      trip: null
+    };
+  }
+
+  // Buscamos el trip en la base de datos.
+  const trip = await getTripById(tripId);
+
+  // Si el trip no existe, devolvemos 404.
+  if (!trip) {
+    return {
+      ok: false,
+      status: 404,
+      errorCode: 'TRIP_NOT_FOUND',
+      trip: null
+    };
+  }
+
+  // Si el usuario ES admin, permitimos acceso aunque no sea el dueño.
+  if (role === 'admin') {
+    return {
+      ok: true,
+      status: 200,
+      errorCode: null,
+      trip
+    };
+  }
+
+  // Si NO es admin, verificamos que el trip sea del usuario actual.
+  if (trip.userId !== userId) {
+    return {
+      ok: false,
+      status: 403,
+      errorCode: 'FORBIDDEN_TRIP_OWNER',
+      trip: null
+    };
+  }
+
+  // Todo OK: el trip pertenece al usuario autenticado.
+  return {
+    ok: true,
+    status: 200,
+    errorCode: null,
+    trip
+  };
+}
+
+//
+// -----------------------------------------------------------------------------
 // POST /api/itineraries
 // ---------------------
 // Crea un nuevo itinerario. En esta primera versión asumimos que el
@@ -44,6 +112,20 @@ export async function create(req, res, next) {
     // Validamos el cuerpo del request usando Zod.
     // Esto garantiza que tripId, data, etc. tengan la forma correcta.
     const data = itineraryCreateSchema.parse(req.body);
+
+    // Antes de crear el itinerario, verificamos que el trip exista
+    // y que pertenezca al usuario autenticado (o que sea admin).
+    const ownership = await checkTripOwnership({
+      tripId: data.tripId,
+      req
+    });
+
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({
+        ok: false,
+        error: ownership.errorCode
+      });
+    }
 
     // Llamamos al servicio para crear el itinerario en Firestore.
     const created = await createItinerary(data);
@@ -63,7 +145,8 @@ export async function create(req, res, next) {
 //
 // GET /api/itineraries/:id
 // ------------------------
-// Recupera un itinerario por su ID.
+// Recupera un itinerario por su ID, siempre que el trip asociado
+// pertenezca al usuario autenticado (o el usuario sea admin).
 //
 export async function getById(req, res, next) {
   try {
@@ -80,7 +163,20 @@ export async function getById(req, res, next) {
       });
     }
 
-    // Si existe, devolvemos el itinerario formateado.
+    // Verificamos que el trip asociado al itinerario pertenezca al usuario.
+    const ownership = await checkTripOwnership({
+      tripId: it.tripId,
+      req
+    });
+
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({
+        ok: false,
+        error: ownership.errorCode
+      });
+    }
+
+    // Si existe y pertenece al usuario (o es admin), devolvemos el itinerario.
     return res.status(200).json({
       ok: true,
       itinerary: toPublicItinerary(it)
@@ -96,9 +192,39 @@ export async function getById(req, res, next) {
 // Lista itinerarios. Normalmente se usará filtrando por tripId
 // para ver todos los itinerarios asociados a un viaje.
 //
+// Por seguridad, en esta versión requerimos tripId para usuarios
+// normales. Más adelante, un rol admin podría listar sin tripId.
+//
 export async function list(req, res, next) {
   try {
     const { tripId, limit, startAfterId } = req.query;
+
+    const { role } = getAuthInfo(req);
+
+    // Para usuarios no admin, exigimos tripId para poder verificar ownership.
+    if (!tripId && role !== 'admin') {
+      return res.status(400).json({
+        ok: false,
+        error: 'TRIP_ID_REQUIRED'
+      });
+    }
+
+    // Si viene tripId, verificamos que el trip pertenezca al usuario
+    // (o que sea admin). Esto asegura que no se puedan listar itinerarios
+    // de viajes ajenos.
+    if (tripId) {
+      const ownership = await checkTripOwnership({
+        tripId,
+        req
+      });
+
+      if (!ownership.ok) {
+        return res.status(ownership.status).json({
+          ok: false,
+          error: ownership.errorCode
+        });
+      }
+    }
 
     // Parseamos el límite y lo acotamos a un máximo razonable.
     const parsedLimit = limit
@@ -130,9 +256,36 @@ export async function list(req, res, next) {
 // para actualizar el "score", ajustar algunas actividades o cambiar
 // el modelo de IA utilizado.
 //
+// Solo permitimos la actualización si el itinerario pertenece a un
+// trip del usuario autenticado (o si el usuario es admin).
+//
 export async function update(req, res, next) {
   try {
     const { id } = req.params;
+
+    // Buscamos el itinerario actual para verificar que existe
+    // y que su trip asociado pertenece al usuario.
+    const existing = await getItineraryById(id);
+
+    if (!existing) {
+      return res.status(404).json({
+        ok: false,
+        error: 'NOT_FOUND'
+      });
+    }
+
+    // Verificamos ownership del trip asociado.
+    const ownership = await checkTripOwnership({
+      tripId: existing.tripId,
+      req
+    });
+
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({
+        ok: false,
+        error: ownership.errorCode
+      });
+    }
 
     // Validamos el body con el esquema de actualización parcial.
     const data = itineraryUpdateSchema.parse(req.body);
@@ -140,7 +293,7 @@ export async function update(req, res, next) {
     // Llamamos al servicio para aplicar el patch.
     const updated = await updateItinerary(id, data);
 
-    // Si no se encontró el itinerario, devolvemos 404.
+    // Si por algún motivo no se encontró al actualizar, devolvemos 404.
     if (!updated) {
       return res.status(404).json({
         ok: false,
@@ -161,17 +314,40 @@ export async function update(req, res, next) {
 //
 // DELETE /api/itineraries/:id
 // ---------------------------
-// Elimina un itinerario por ID. Se puede usar para borrar versiones
-// anteriores o itinerarios descartados.
+// Elimina un itinerario por ID. Solo si el trip asociado pertenece
+// al usuario autenticado (o el usuario es admin).
 //
 export async function remove(req, res, next) {
   try {
     const { id } = req.params;
 
+    // Obtenemos el itinerario para poder verificar propiedad.
+    const it = await getItineraryById(id);
+
+    if (!it) {
+      return res.status(404).json({
+        ok: false,
+        error: 'NOT_FOUND'
+      });
+    }
+
+    // Verificamos ownership del trip asociado.
+    const ownership = await checkTripOwnership({
+      tripId: it.tripId,
+      req
+    });
+
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({
+        ok: false,
+        error: ownership.errorCode
+      });
+    }
+
     // Intentamos eliminar el itinerario.
     const ok = await deleteItinerary(id);
 
-    // Si no existía, devolvemos 404.
+    // Si no existía (caso raro: entre la lectura y el delete), devolvemos 404.
     if (!ok) {
       return res.status(404).json({
         ok: false,
@@ -199,6 +375,9 @@ export async function remove(req, res, next) {
 // En esta primera versión, la "IA" es local (no se llama a ningún modelo externo),
 // pero la arquitectura ya está lista para conectar un modelo real más adelante.
 //
+// Ahora, además, verificamos que el trip asociado al itinerario
+// pertenezca al usuario autenticado (o sea admin) antes de enriquecer.
+//
 export async function enrichWithAI(req, res, next) {
   try {
     // Obtenemos el ID del itinerario desde los parámetros de la URL.
@@ -209,10 +388,6 @@ export async function enrichWithAI(req, res, next) {
     const user = req.user || null;
 
     // Definimos un esquema Zod para el cuerpo de la petición.
-    // Aquí se pueden añadir más opciones si las necesitás:
-    //  - tone: "relajado", "aventurero", etc.
-    //  - locale: "es-AR", "es-ES", etc.
-    //  - modelHint: sugerencia de modelo (por ahora solo a nivel de string).
     const bodySchema = z.object({
       tone: z
         .enum(['neutral', 'relajado', 'aventurero'])
@@ -228,8 +403,7 @@ export async function enrichWithAI(req, res, next) {
         .optional()
     });
 
-    // Validamos el body con Zod. Si algo no cumple, lanza un ZodError
-    // que será capturado por el errorHandler global.
+    // Validamos el body con Zod.
     const body = bodySchema.parse(req.body || {});
 
     // Recuperamos el itinerario desde la base de datos usando el service.
@@ -243,17 +417,21 @@ export async function enrichWithAI(req, res, next) {
       });
     }
 
-    // Recuperamos el trip asociado al itinerario para tener más contexto.
-    const trip = await getTripById(itinerary.tripId);
+    // Recuperamos el trip asociado al itinerario para tener más contexto
+    // Y, MUY IMPORTANTE, para verificar que pertenece al usuario actual.
+    const ownership = await checkTripOwnership({
+      tripId: itinerary.tripId,
+      req
+    });
 
-    // Si no encontramos el trip, también devolvemos 404,
-    // porque sin el viaje no podemos personalizar bien el contenido.
-    if (!trip) {
-      return res.status(404).json({
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({
         ok: false,
-        error: 'TRIP_NOT_FOUND_FOR_ITINERARY'
+        error: ownership.errorCode
       });
     }
+
+    const trip = ownership.trip;
 
     // Llamamos al servicio de "IA" para construir una nueva versión
     // enriquecida del itinerario.

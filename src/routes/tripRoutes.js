@@ -1,58 +1,85 @@
-// Importamos Router para definir las rutas relacionadas con trips (viajes).
+// src/routes/tripRoutes.js
+// ------------------------
+// Este archivo define las rutas HTTP relacionadas con "trips" (viajes).
+// Aquí conectamos:
+//   - Router de Express
+//   - authMiddleware (para proteger las rutas con JWT)
+//   - Los handlers definidos en tripController.
+//
+// Rutas principales:
+//   POST   /api/trips               -> crear un trip
+//   GET    /api/trips               -> listar trips (del usuario autenticado)
+//   GET    /api/trips/:id           -> obtener un trip por id
+//   PATCH  /api/trips/:id           -> actualizar un trip
+//   DELETE /api/trips/:id           -> eliminar un trip
+//
+// Más adelante también se conecta:
+//   POST   /api/trips/:tripId/generate-itinerary  -> generar itinerario para un trip
+
 import { Router } from 'express';
 
 // Importamos el middleware de autenticación.
-// Los trips son siempre privados por usuario, así que todas las rutas
-// de este router deberían requerir un token válido.
+// Esto asegura que todas las rutas de trips requieran un token válido.
 import { authMiddleware } from '../middlewares/authMiddleware.js';
 
-// Importamos los controladores que manejan la lógica para cada endpoint.
+// Importamos los handlers del controlador de trips.
 import {
   create,
   getById,
   list,
   update,
-  remove,
-  generateItinerary
+  remove
 } from '../controllers/tripController.js';
 
-// Creamos el router específico para /api/trips.
+// Creamos una instancia de Router para agrupar las rutas de trips.
 const router = Router();
 
-// Aplicamos el middleware de autenticación a TODAS las rutas de trips.
-// A partir de aquí, cualquier endpoint definido en este router
-// solo será accesible si el usuario está autenticado.
-router.use(authMiddleware);
+// -----------------------------------------------------------------------------
+// POST /api/trips
+// -----------------------------------------------------------------------------
+// Crear un nuevo trip.
+// Protegido con authMiddleware: solo usuarios autenticados pueden crear viajes.
+//
+router.post('/', authMiddleware, create);
 
-// Crear un trip (viaje) para el usuario autenticado.
-// Método: POST
-// URL completa: POST /api/trips
-router.post('/', create);
+// -----------------------------------------------------------------------------
+// GET /api/trips/:id
+// -----------------------------------------------------------------------------
+// Obtener un trip por ID.
+// Protegido con authMiddleware: solo usuarios autenticados pueden ver los detalles.
+// En el controlador validaremos que el trip pertenezca al usuario, salvo que
+// tenga rol "admin" (esto lo agregaremos en el siguiente paso).
+//
+router.get('/:id', authMiddleware, getById);
 
-// Obtener un trip por ID, siempre que pertenezca al usuario actual.
-// Método: GET
-// URL completa: GET /api/trips/:id
-router.get('/:id', getById);
+// -----------------------------------------------------------------------------
+// GET /api/trips
+// -----------------------------------------------------------------------------
+// Listar trips del usuario autenticado.
+// En el controlador usaremos req.user.id para filtrar por dueño.
+// De esta forma, cada usuario solo ve sus propios viajes.
+// (Podremos hacer excepciones para admin más adelante si hace falta.)
+//
+router.get('/', authMiddleware, list);
 
-// Listar trips del usuario (con filtros opcionales por query).
-// Método: GET
-// URL completa: GET /api/trips
-router.get('/', list);
+// -----------------------------------------------------------------------------
+// PATCH /api/trips/:id
+// -----------------------------------------------------------------------------
+// Actualizar un trip existente.
+// Protegido con authMiddleware.
+// En el controlador validaremos que el trip realmente pertenezca al usuario.
+// Si no es dueño ni admin, devolveremos 403 (FORBIDDEN).
+//
+router.patch('/:id', authMiddleware, update);
 
-// Actualizar un trip existente del usuario.
-// Método: PATCH
-// URL completa: PATCH /api/trips/:id
-router.patch('/:id', update);
+// -----------------------------------------------------------------------------
+// DELETE /api/trips/:id
+// -----------------------------------------------------------------------------
+// Eliminar un trip existente.
+// Protegido con authMiddleware.
+// También validaremos ownership en el controlador.
+//
+router.delete('/:id', authMiddleware, remove);
 
-// Eliminar un trip del usuario.
-// Método: DELETE
-// URL completa: DELETE /api/trips/:id
-router.delete('/:id', remove);
-
-// Generar un itinerario para un trip usando el motor de reglas.
-// Requiere autenticación porque el trip debe pertenecer al usuario.
-router.post('/:id/generate-itinerary', authMiddleware, generateItinerary);
-
-// Exportamos el router para montarlo en index.js como:
-// app.use('/api/trips', tripRoutes);
+// Exportamos el router para poder usarlo en index.js.
 export default router;
