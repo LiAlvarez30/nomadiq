@@ -1,70 +1,84 @@
 // src/pages/TripsPage.jsx
-
-// Esta página muestra la lista de viajes del usuario logueado.
+//
+// Esta página muestra la lista de viajes del usuario logueado,
+// actuando como un mini dashboard de "Mis viajes".
+//
 // Se conecta al backend real usando el endpoint protegido:
 //   GET /api/trips
 // que requiere el header:
 //   Authorization: Bearer <token>
 //
-// Acá vamos a:
-// - Leer el token desde AuthContext.
-// - Llamar al backend con axios (apiClient).
-// - Manejar estados de carga, error y vacío.
-// - Mostrar los viajes en tarjetas modernas con Tailwind.
+// En esta versión:
+//  - Leemos el token y el usuario desde AuthContext.
+//  - Llamamos al backend con apiClient (axios).
+//  - Manejamos estados de carga, error y lista vacía.
+//  - Mostramos los viajes en tarjetas modernas con Tailwind.
+//  - Incluimos un botón claro para crear un nuevo viaje.
+//  - Damos acceso directo al detalle de cada viaje (TripDetailPage).
 
 import { useContext, useEffect, useState } from 'react';
-
-// Cliente axios configurado con baseURL = http://localhost:3000
+import { Link } from 'react-router-dom';
 import apiClient from '../services/apiClient';
-
-// Contexto de autenticación, desde acá obtenemos el token del usuario.
 import { AuthContext } from '../context/AuthContext.jsx';
 
-//Esto le dice al componente que vamos a usar navegación interna de React Router, sin recargar la página.
-import { Link } from "react-router-dom";
-
-
-// Pequeñas funciones de ayuda para formatear fechas y dinero
+// ---------------------------------------------------------------------------
+// Función utilitaria: formatear fechas a un formato legible en español.
+// ---------------------------------------------------------------------------
 function formatDate(dateString) {
-  if (!dateString) return 'Fecha no disponible';
+  if (!dateString) return 'N/D';
 
-  // Usamos Intl para mostrar la fecha en un formato amigable en español.
-  const date = new Date(dateString);
-  return date.toLocaleDateString('es-AR', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-  });
+  // Usamos Intl.DateTimeFormat para mostrar algo tipo "10 oct 2025".
+  try {
+    const date = new Date(dateString);
+    return new Intl.DateTimeFormat('es-AR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }).format(date);
+  } catch {
+    return dateString;
+  }
 }
 
-function formatCurrency(amount) {
-  if (amount == null) return 'Sin presupuesto';
+// ---------------------------------------------------------------------------
+// Función utilitaria: formatear presupuesto como moneda (ARS).
+// ---------------------------------------------------------------------------
+function formatBudget(amount) {
+  if (amount === null || amount === undefined) return 'Sin definir';
 
-  // Formateamos el presupuesto como moneda (pesos argentinos por defecto).
+  const number = Number(amount);
+  if (Number.isNaN(number)) return 'Sin definir';
+
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',
     currency: 'ARS',
     maximumFractionDigits: 0,
-  }).format(amount);
+  }).format(number);
 }
 
+// ---------------------------------------------------------------------------
 // Pequeño componente para mostrar una "pill" con el estado del viaje.
+// ---------------------------------------------------------------------------
 function StatusBadge({ status }) {
   // Normalizamos el texto por las dudas.
   const value = (status || '').toLowerCase();
 
   let label = 'Sin estado';
-  let classes = 'bg-slate-800 text-slate-200';
+  let classes = 'bg-slate-800 text-slate-200 border border-slate-600';
 
   if (value === 'planned') {
     label = 'Planificado';
-    classes = 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40';
-  } else if (value === 'in-progress') {
+    classes =
+      'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40';
+  } else if (value === 'in_progress' || value === 'in-progress') {
     label = 'En curso';
     classes = 'bg-amber-500/15 text-amber-300 border border-amber-500/40';
   } else if (value === 'completed') {
     label = 'Completado';
     classes = 'bg-sky-500/15 text-sky-300 border border-sky-500/40';
+  } else if (value === 'cancelled') {
+    label = 'Cancelado';
+    classes = 'bg-rose-500/15 text-rose-300 border border-rose-500/40';
   }
 
   return (
@@ -76,27 +90,23 @@ function StatusBadge({ status }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Componente principal: TripsPage
+// ---------------------------------------------------------------------------
 function TripsPage() {
-  // -------------------------------------------------------
-  // 1) Leemos el token desde el contexto de autenticación
-  // -------------------------------------------------------
-  //
+  // Leemos token y usuario desde el contexto de autenticación.
   // El endpoint /api/trips requiere:
   //   Authorization: Bearer <token>
-  //
-  // Ese token lo guardamos en AuthContext cuando el usuario hace login.
   const { token, user } = useContext(AuthContext);
 
-  // -------------------------------------------------------
-  // 2) Estados para manejar la UX de la pantalla
-  // -------------------------------------------------------
+  // Estados para manejar la UX de la pantalla.
   const [trips, setTrips] = useState([]);       // Lista de viajes.
   const [loading, setLoading] = useState(true); // Mientras hablamos con el backend.
   const [error, setError] = useState(null);     // Mensaje de error en texto humano.
 
-  // -------------------------------------------------------
-  // 3) useEffect para cargar los viajes al entrar a la página
-  // -------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // useEffect: cargar los viajes al entrar a la página.
+  // -------------------------------------------------------------------------
   useEffect(() => {
     // Si por alguna razón llegamos acá sin token (algo raro, porque la ruta
     // ya está protegida por PrivateRoute), dejamos un mensaje de error
@@ -111,32 +121,39 @@ function TripsPage() {
     const fetchTrips = async () => {
       try {
         // Limpiamos estado previo.
-        setError(null);
         setLoading(true);
+        setError(null);
 
-        // Llamada REAL al endpoint protegido:
+        // Llamada real al backend:
         //   GET /api/trips
-        //
-        // Notá el header:
-        //   Authorization: Bearer <token>
-        //
+        // El backend devuelve un objeto del estilo:
+        // {
+        //   ok: true,
+        //   count: N,
+        //   trips: [ { id, title, startDate, endDate, budget, status, ... }, ... ]
+        // }
         const response = await apiClient.get('/api/trips', {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
-        // El backend debería devolver algo como:
-        // {
-        //   ok: true,
-        //   count: N,
-        //   trips: [ { id, title, startDate, endDate, budget, status, ... }, ... ]
-        // }
-        const { trips: tripsFromApi } = response.data;
+        const { trips: tripsFromApi } = response.data || {};
 
-        setTrips(tripsFromApi || []);
+        // Aseguramos que trips sea siempre un array.
+        const safeTrips = Array.isArray(tripsFromApi) ? tripsFromApi : [];
 
-        // Solo para debug mientras desarrollamos:
+        // Ordenamos los viajes para que los más recientes aparezcan primero.
+        // Priorizamos startDate; si no existe, usamos createdAt.
+        const sorted = [...safeTrips].sort((a, b) => {
+          const dateA = new Date(a.startDate || a.createdAt || 0);
+          const dateB = new Date(b.startDate || b.createdAt || 0);
+          return dateB - dateA;
+        });
+
+        setTrips(sorted);
+
+        // Log de apoyo para desarrollo.
         console.log('Viajes recibidos desde /api/trips:', response.data);
       } catch (err) {
         console.error('Error al cargar los viajes:', err);
@@ -147,38 +164,56 @@ function TripsPage() {
 
           // Podés ajustar estos mensajes según los códigos de tu backend.
           if (apiErrorCode === 'UNAUTHORIZED' || apiErrorCode === 'INVALID_TOKEN') {
-            setError('Tu sesión no es válida o expiró. Probá volver a iniciar sesión.');
+            setError(
+              'Tu sesión no es válida o expiró. Probá volver a iniciar sesión.'
+            );
           } else {
-            setError(`El servidor devolvió un error al cargar tus viajes: ${apiErrorCode}`);
+            setError(
+              `El servidor devolvió un error al cargar tus viajes: ${apiErrorCode}`
+            );
           }
         } else {
           // Si directamente no hubo respuesta (servidor caído, problema de red, etc.).
-          setError('No se pudo conectar con el servidor para obtener tus viajes.');
+          setError(
+            'No se pudo conectar con el servidor para obtener tus viajes.'
+          );
         }
       } finally {
         setLoading(false);
       }
     };
 
-    // Ejecutamos la función async definida arriba.
+    // Disparamos la carga de viajes.
     fetchTrips();
-  }, [token]); // Si el token cambia (por ejemplo, nuevo login), recargamos los viajes.
+  }, [token]);
 
-  // -------------------------------------------------------
-  // 4) Render de la pantalla
-  // -------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Render principal de la página.
+  // -------------------------------------------------------------------------
   return (
-    <div className="space-y-6">
-      {/* Encabezado de la sección */}
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold">
-          Tus viajes ✈️
-        </h1>
-        <p className="text-sm text-slate-300">
-          {user
-            ? `Hola, ${user.name}. Acá vas a ver todos los viajes que creaste con NomadIQ.`
-            : 'Acá vas a ver todos los viajes creados con tu cuenta.'}
-        </p>
+    <div className="space-y-5">
+      {/* Encabezado tipo dashboard */}
+      <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="space-y-1">
+          <h1 className="text-xl md:text-2xl font-semibold text-slate-50">
+            Mis viajes
+          </h1>
+          <p className="text-xs md:text-sm text-slate-300">
+            {user && user.name
+              ? `Hola, ${user.name}. Acá ves todos los viajes que creaste con NomadIQ.`
+              : 'Acá vas a ver todos los viajes asociados a tu cuenta.'}
+          </p>
+        </div>
+
+        {/* Acción principal: crear nuevo viaje */}
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to="/trips/new"
+            className="inline-flex items-center rounded-full bg-emerald-500 px-4 py-1.5 text-xs md:text-sm font-medium text-emerald-950 shadow-md shadow-emerald-900/40 hover:bg-emerald-400 transition"
+          >
+            + Crear nuevo viaje
+          </Link>
+        </div>
       </header>
 
       {/* Bloque de estados especiales: loading, error, vacío */}
@@ -198,15 +233,20 @@ function TripsPage() {
       )}
 
       {!loading && !error && trips.length === 0 && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-slate-200">
-          <p className="font-medium mb-2">
-            Todavía no tenés viajes creados.
-          </p>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-slate-200 space-y-2">
+          <p className="font-medium">Todavía no tenés viajes creados.</p>
           <p className="text-slate-400">
-            Cuando empieces a planificar un viaje con NomadIQ, va a aparecer acá
-            con sus fechas, presupuesto y estado. Más adelante vamos a agregar
-            un botón para crear un viaje nuevo desde esta misma pantalla.
+            Cuando empieces a planificar un viaje con NomadIQ, va a aparecer
+            acá con sus fechas, presupuesto y estado.
           </p>
+          <div className="pt-2">
+            <Link
+              to="/trips/new"
+              className="inline-flex items-center rounded-full border border-emerald-400/80 bg-transparent px-4 py-1.5 text-xs font-medium text-emerald-200 hover:bg-emerald-500/10 transition"
+            >
+              Crear mi primer viaje
+            </Link>
+          </div>
         </div>
       )}
 
@@ -223,7 +263,7 @@ function TripsPage() {
             {trips.map((trip) => (
               <article
                 key={trip.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 shadow-sm hover:border-emerald-500/60 hover:shadow-emerald-500/10 transition-colors"
+                className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 hover:border-emerald-500/60 hover:shadow-lg hover:shadow-emerald-500/10 transition-colors"
               >
                 {/* Encabezado de la tarjeta: título + estado */}
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -233,60 +273,56 @@ function TripsPage() {
                   <StatusBadge status={trip.status} />
                 </div>
 
-                {/* Fechas del viaje */}
-                <div className="text-xs text-slate-400 mb-2">
-                  <p>
-                    {trip.startDate && trip.endDate
-                      ? `Del ${formatDate(trip.startDate)} al ${formatDate(trip.endDate)}`
-                      : 'Fechas no definidas'}
-                  </p>
-                </div>
-
-                {/* Presupuesto e intereses */}
-                <div className="flex flex-col gap-2 text-xs text-slate-300">
-                  <p>
-                    <span className="text-slate-400">Presupuesto estimado:&nbsp;</span>
-                    <span className="font-medium">
-                      {formatCurrency(trip.budget)}
-                    </span>
-                  </p>
-
-                  {Array.isArray(trip.interests) && trip.interests.length > 0 && (
+                {/* Cuerpo de la tarjeta: fechas, presupuesto, intereses */}
+                <div className="space-y-1 text-xs text-slate-300">
+                  {trip.startDate && trip.endDate && (
                     <p>
-                      <span className="text-slate-400">Intereses:&nbsp;</span>
+                      <span className="text-slate-400">Fechas:&nbsp;</span>
                       <span className="font-medium text-slate-200">
-                        {trip.interests.join(' • ')}
+                        {formatDate(trip.startDate)} →{' '}
+                        {formatDate(trip.endDate)}
                       </span>
                     </p>
                   )}
+
+                  {trip.budget !== undefined && (
+                    <p>
+                      <span className="text-slate-400">
+                        Presupuesto estimado:&nbsp;
+                      </span>
+                      <span className="font-medium text-slate-200">
+                        {formatBudget(trip.budget)}
+                      </span>
+                    </p>
+                  )}
+
+                  {Array.isArray(trip.interests) &&
+                    trip.interests.length > 0 && (
+                      <p>
+                        <span className="text-slate-400">
+                          Intereses:&nbsp;
+                        </span>
+                        <span className="font-medium text-slate-200">
+                          {trip.interests.join(' • ')}
+                        </span>
+                      </p>
+                    )}
                 </div>
 
-                {/* Pie de la tarjeta (luego acá podemos agregar botones) */}
-                <div className="mt-3 flex justify-between items-center text-[11px] text-slate-500">
+                {/* Pie de la tarjeta: info de creación + acceso al detalle */}
+                <div className="mt-4 flex items-center justify-between text-[11px] text-slate-500">
                   <span>
                     Creado:&nbsp;
                     {trip.createdAt ? formatDate(trip.createdAt) : 'N/D'}
                   </span>
-                  {/* Placeholder para acciones futuras */}
-                  <span className="text-emerald-400">
-                    Próximamente: ver detalle ›
-                  </span>
-                </div>
 
-                {/* Footer de la tarjeta: acceso al detalle */}
-                <div className="mt-4 flex items-center justify-between text-xs">
-                  <span className="text-slate-500">
-                    Ver detalle completo del viaje
-                 </span>
-
-                {/* Link a la pantalla de detalle:
-                 /trips/:id → TripDetailPage */}
-                 <Link
-                  to={`/trips/${trip.id}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500 px-3 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/10 transition"
-                 >
-                 Ver detalle
-                 <span>↗</span>
+                  {/* Link a la pantalla de detalle: /trips/:id → TripDetailPage */}
+                  <Link
+                    to={`/trips/${trip.id}`}
+                    className="inline-flex items-center gap-1 text-emerald-300 hover:text-emerald-200 hover:underline underline-offset-2 transition"
+                  >
+                    Ver detalle
+                    <span>↗</span>
                   </Link>
                 </div>
               </article>
