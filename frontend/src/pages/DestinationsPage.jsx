@@ -1,314 +1,305 @@
-  // src/pages/DestinationsPage.jsx
-  //
-  // Esta pantalla es el "Explorador de destinos" de NomadIQ.
-  // Ahora está conectada al backend real:
-  //
-  //   GET /api/destinations
-  //
-  // y además agrega:
-  // - buscador por texto (nombre, resumen, tags),
-  // - filtro por país,
-  // - filtro por tag (intereses).
-  //
-  // Importante: los filtros son del lado del frontend.
-  // No cambiamos el contrato de la API, solo trabajamos
-  // con los datos que ya recibimos.
+// src/pages/DestinationsPage.jsx
+//
+// Esta pantalla muestra el catálogo de destinos disponibles en NomadIQ.
+// La idea es que se sienta como una galería de lugares inspiradores,
+// con una UX más cuidada que un simple listado.
+//
+// Se conecta al backend usando:
+//   GET /api/destinations
+//
+// El backend devuelve un objeto del estilo:
+//   { ok: true, count: N, destinations: [ ... ] }
+//
+// En esta versión:
+//  - Leemos opcionalmente el token (por si la ruta está protegida).
+//  - Cargamos la lista de destinos desde el backend.
+//  - Mostramos estados de carga, error y vacío.
+//  - Renderizamos tarjetas modernas con Tailwind para cada destino.
+//  - Agregamos búsqueda por texto y filtro simple por país.
 
-  import { useEffect, useState } from "react";
-  import { Link } from "react-router-dom";
-  import apiClient from "../services/apiClient";
+import { useContext, useEffect, useMemo, useState } from 'react';
+import apiClient from '../services/apiClient';
+import { AuthContext } from '../context/AuthContext.jsx';
 
+// ---------------------------------------------------------------------------
+// Función utilitaria: construir una lista de países únicos a partir
+// de la lista de destinos. Nos sirve para el filtro por país.
+// ---------------------------------------------------------------------------
+function extractCountries(destinations) {
+  const set = new Set();
 
+  destinations.forEach((dest) => {
+    if (dest.country) {
+      set.add(dest.country);
+    }
+  });
 
-  // Pequeño componente visual para mostrar un tag con estilo
-  function Tag({ text }) {
-    return (
-      <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[11px] border border-slate-700">
-        {text}
-      </span>
-    );
-  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+}
 
-  function DestinationsPage() {
-    // Destinos tal como vienen del backend
-    const [destinations, setDestinations] = useState([]);
+// ---------------------------------------------------------------------------
+// Componente para mostrar los tags de un destino (playa, montaña, etc.).
+// ---------------------------------------------------------------------------
+function TagList({ tags }) {
+  if (!Array.isArray(tags) || tags.length === 0) return null;
 
-    // Estados de UX
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-200"
+        >
+          {tag}
+        </span>
+      ))}
+    </div>
+  );
+}
 
-    // Estados de filtro/búsqueda
-    const [searchTerm, setSearchTerm] = useState("");        // texto libre
-    const [selectedCountry, setSelectedCountry] = useState(""); // país elegido
-    const [selectedTag, setSelectedTag] = useState("");         // tag elegido
+// ---------------------------------------------------------------------------
+// Tarjeta individual de destino.
+// Muestra nombre, país, resumen y tags.
+// ---------------------------------------------------------------------------
+function DestinationCard({ destination }) {
+  const { name, country, summary, tags } = destination;
 
-    // Llamada al backend al montar la pantalla
-    useEffect(() => {
-      const fetchDestinations = async () => {
-        try {
-          setError(null);
-          setLoading(true);
+  return (
+    <article className="flex flex-col rounded-2xl border border-slate-800 bg-slate-950/70 p-4 hover:border-emerald-500/60 hover:shadow-lg hover:shadow-emerald-500/10 transition-colors">
+      <header className="mb-2">
+        <h2 className="text-sm font-semibold text-slate-50 line-clamp-2">
+          {name || 'Destino sin nombre'}
+        </h2>
+        {country && (
+          <p className="text-[11px] text-slate-400 mt-0.5">{country}</p>
+        )}
+      </header>
 
-          // Llamada real al backend: GET /api/destinations
-          const res = await apiClient.get("/api/destinations");
+      {summary && (
+        <p className="text-xs text-slate-300 line-clamp-3">{summary}</p>
+      )}
 
-          // El backend responde con:
-          // { ok: true, count: N, destinations: [ ... ] }
-          setDestinations(res.data.destinations || []);
+      <TagList tags={tags} />
 
-          console.log("Destinos recibidos:", res.data);
-        } catch (err) {
-          console.error("Error al cargar destinos:", err);
-          setError("No pudimos cargar los destinos. Por favor, intentá más tarde.");
-        } finally {
-          setLoading(false);
+      <div className="mt-auto pt-3 text-[11px] text-slate-500">
+        <p>Ideal para explorar en tus próximos itinerarios con NomadIQ.</p>
+      </div>
+    </article>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Componente principal: DestinationsPage
+// ---------------------------------------------------------------------------
+function DestinationsPage() {
+  // Leemos el token desde el contexto de autenticación.
+  // Algunas APIs pueden requerir Authorization; otras pueden ser públicas.
+  const { token } = useContext(AuthContext);
+
+  // Lista completa de destinos traída desde el backend.
+  const [destinations, setDestinations] = useState([]);
+
+  // Estados de UX.
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Estado para búsqueda por texto.
+  const [search, setSearch] = useState('');
+
+  // Estado para filtro por país.
+  const [selectedCountry, setSelectedCountry] = useState('todos');
+
+  // -------------------------------------------------------------------------
+  // useEffect: cargar destinos al entrar a la página.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    const fetchDestinations = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        // Si hay token, lo incluimos en los headers. Si no, llamamos sin él.
+        const config = token
+          ? {
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            }
+          : {};
+
+        // Llamada real al backend:
+        //   GET /api/destinations
+        const response = await apiClient.get('/api/destinations', config);
+
+        const { destinations: destinationsFromApi } = response.data || {};
+
+        // Aseguramos que destinations sea siempre un array.
+        const safeDestinations = Array.isArray(destinationsFromApi)
+          ? destinationsFromApi
+          : [];
+
+        setDestinations(safeDestinations);
+
+        console.log(
+          'Destinos recibidos desde /api/destinations:',
+          safeDestinations
+        );
+      } catch (err) {
+        console.error('Error al cargar destinos:', err);
+
+        if (err.response && err.response.data) {
+          const apiErrorCode = err.response.data.error;
+
+          setError(
+            apiErrorCode
+              ? `El servidor devolvió un error al cargar los destinos: ${apiErrorCode}`
+              : 'El servidor devolvió un error al cargar los destinos.'
+          );
+        } else if (err.request) {
+          setError('No se recibió respuesta del backend. ¿Está prendido?');
+        } else {
+          setError(
+            err.message ||
+              'Ocurrió un error inesperado al intentar cargar los destinos.'
+          );
         }
-      };
-
-      fetchDestinations();
-    }, []);
-
-    // --------------------------------------------------------
-    // 1) Derivamos lista de países y tags disponibles
-    //    a partir de los destinos recibidos
-    // --------------------------------------------------------
-    const countries = Array.from(
-      new Set(
-        (destinations || [])
-          .map((d) => d.country)
-          .filter(Boolean) // sacamos null/undefined
-      )
-    ).sort();
-
-    const allTags = Array.from(
-      new Set(
-        (destinations || []).flatMap((d) => d.tags || [])
-      )
-    ).sort();
-
-    // --------------------------------------------------------
-    // 2) Aplicamos filtros en memoria
-    //    (NO tocamos la llamada al backend)
-    // --------------------------------------------------------
-    const filteredDestinations = (destinations || []).filter((dest) => {
-      // Filtro por país
-      if (selectedCountry && dest.country !== selectedCountry) {
-        return false;
+      } finally {
+        setLoading(false);
       }
+    };
 
-      // Filtro por tag
-      if (selectedTag) {
-        const tags = dest.tags || [];
-        if (!tags.includes(selectedTag)) {
-          return false;
-        }
-      }
+    fetchDestinations();
+  }, [token]);
 
-      // Filtro por texto
-      if (searchTerm.trim() !== "") {
-        const term = searchTerm.toLowerCase();
-        const name = (dest.name || "").toLowerCase();
-        const summary = (dest.summary || "").toLowerCase();
-        const tagsText = (dest.tags || []).join(" ").toLowerCase();
+  // -------------------------------------------------------------------------
+  // Derivamos lista de países disponibles a partir de los destinos.
+  // Uso useMemo para no recalcular en cada render si destinations no cambió.
+  // -------------------------------------------------------------------------
+  const countries = useMemo(
+    () => extractCountries(destinations),
+    [destinations]
+  );
 
-        const matches =
-          name.includes(term) ||
-          summary.includes(term) ||
-          tagsText.includes(term);
+  // -------------------------------------------------------------------------
+  // Derivamos la lista final de destinos a mostrar según:
+  //  - filtro por país
+  //  - búsqueda por texto (en nombre y resumen)
+  // -------------------------------------------------------------------------
+  const filteredDestinations = useMemo(() => {
+    return destinations.filter((dest) => {
+      const matchesCountry =
+        selectedCountry === 'todos' ||
+        (dest.country && dest.country === selectedCountry);
 
-        if (!matches) return false;
-      }
+      const searchTerm = search.trim().toLowerCase();
+      const matchesSearch =
+        searchTerm.length === 0 ||
+        (dest.name && dest.name.toLowerCase().includes(searchTerm)) ||
+        (dest.summary && dest.summary.toLowerCase().includes(searchTerm));
 
-      return true;
+      return matchesCountry && matchesSearch;
     });
+  }, [destinations, selectedCountry, search]);
 
-    return (
-      <div className="space-y-6">
-        {/* Encabezado */}
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold">Explorar destinos 🌍</h1>
-          <p className="text-sm text-slate-300">
-            Descubrí lugares increíbles recomendados por NomadIQ. Podés filtrar
-            por país, intereses o buscar por nombre.
+  // -------------------------------------------------------------------------
+  // Render principal de la página.
+  // -------------------------------------------------------------------------
+  return (
+    <div className="space-y-5">
+      {/* Encabezado de la sección */}
+      <header className="space-y-1">
+        <h1 className="text-xl md:text-2xl font-semibold text-slate-50">
+          Destinos
+        </h1>
+        <p className="text-xs md:text-sm text-slate-300">
+          Explorá destinos que ya tienen actividades precargadas para ayudarte a
+          generar itinerarios más interesantes.
+        </p>
+      </header>
+
+      {/* Controles de búsqueda y filtro */}
+      <section className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        {/* Búsqueda por texto */}
+        <div className="flex-1 max-w-md">
+          <label className="block text-[11px] font-medium uppercase tracking-wide text-slate-400 mb-1">
+            Buscar destino
+          </label>
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Ej: Barcelona, montaña, playa..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full rounded-full border border-slate-700 bg-slate-950/80 px-4 py-2 text-xs text-slate-100 placeholder:text-slate-500 shadow-inner focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+        </div>
+
+        {/* Filtro por país */}
+        <div className="w-full md:w-56">
+          <label className="block text-[11px] font-medium uppercase tracking-wide text-slate-400 mb-1">
+            Filtrar por país
+          </label>
+          <select
+            value={selectedCountry}
+            onChange={(e) => setSelectedCountry(e.target.value)}
+            className="w-full rounded-full border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-100 shadow-inner focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          >
+            <option value="todos">Todos los países</option>
+            {countries.map((country) => (
+              <option key={country} value={country}>
+                {country}
+              </option>
+            ))}
+          </select>
+        </div>
+      </section>
+
+      {/* Estados de carga / error / vacío */}
+      {loading && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-200">
+          <p className="animate-pulse">
+            Cargando destinos disponibles desde el backend...
           </p>
-        </header>
+        </div>
+      )}
 
-        {/* Filtros y buscador */}
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 space-y-3">
-          <div className="grid gap-3 md:grid-cols-3">
-            {/* Buscador de texto */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-400">
-                Buscar por nombre, descripción o tag
-              </label>
-              <input
-                type="text"
-                placeholder="Ej: Bariloche, playa, nieve, gastronomía..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-50"
-              />
-            </div>
+      {!loading && error && (
+        <div className="rounded-2xl border border-red-700 bg-red-900/40 p-4 text-sm text-red-100">
+          <p className="font-medium mb-1">
+            No pudimos cargar los destinos 😕
+          </p>
+          <p>{error}</p>
+        </div>
+      )}
 
-            {/* Filtro por país */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-400">Filtrar por país</label>
-              <select
-                value={selectedCountry}
-                onChange={(e) => setSelectedCountry(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-50"
-              >
-                <option value="">Todos los países</option>
-                {countries.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
-                  </option>
-                ))}
-              </select>
-            </div>
+      {!loading && !error && filteredDestinations.length === 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-slate-200 space-y-2">
+          <p className="font-medium">No encontramos destinos para tu búsqueda.</p>
+          <p className="text-slate-400 text-xs">
+            Probá borrar el texto de búsqueda o seleccionar "Todos los países"
+            para ver nuevamente el catálogo completo.
+          </p>
+        </div>
+      )}
 
-            {/* Filtro por tag */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-400">Filtrar por tag</label>
-              <select
-                value={selectedTag}
-                onChange={(e) => setSelectedTag(e.target.value)}
-                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-50"
-              >
-                <option value="">Todos los tags</option>
-                {allTags.map((tag) => (
-                  <option key={tag} value={tag}>
-                    {tag}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+      {/* Grid de destinos */}
+      {!loading && !error && filteredDestinations.length > 0 && (
+        <section className="space-y-2">
+          <p className="text-[11px] text-slate-400">
+            Mostrando {filteredDestinations.length}{' '}
+            {filteredDestinations.length === 1 ? 'destino' : 'destinos'}.
+          </p>
 
-            {/* Botón para limpiar todos los filtros */}
-            <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => {
-        // Este botón resetea los 3 filtros:
-        // - buscador,
-        // - país,
-        // - tag.
-        // Es la forma rápida de volver a ver todos los destinos.
-                setSearchTerm("");
-                setSelectedCountry("");
-                setSelectedTag("");
-            }}
-                className="text-xs px-3 py-1 rounded-full border border-slate-700 text-slate-300 hover:bg-slate-800 transition"
-                >
-                Limpiar filtros
-            </button>
-            </div>
-
-
-
-          {/* Pequeño resumen de resultados */}
-          {!loading && !error && (
-            <p className="text-[11px] text-slate-400">
-              Mostrando{" "}
-              <span className="text-emerald-300 font-semibold">
-                {filteredDestinations.length}
-              </span>{" "}
-              destino
-              {filteredDestinations.length === 1 ? "" : "s"} filtrado
-              {searchTerm || selectedCountry || selectedTag ? "s" : "s (sin filtros)"}
-              .
-            </p>
-          )}
-        </section>
-
-        {/* LOADING */}
-        {loading && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-slate-300 animate-pulse">
-            Cargando destinos...
-          </div>
-        )}
-
-        {/* ERROR */}
-        {!loading && error && (
-          <div className="rounded-2xl border border-red-700 bg-red-900/40 p-4 text-red-300">
-            {error}
-          </div>
-        )}
-
-        {/* VACÍO (después de filtros) */}
-        {!loading && !error && filteredDestinations.length === 0 && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 text-slate-300">
-            <p className="font-medium mb-1">
-              No encontramos destinos que coincidan con tu búsqueda.
-            </p>
-            <p className="text-slate-400 text-sm">
-              Probá borrar los filtros o usar otras palabras clave.
-            </p>
-          </div>
-        )}
-
-        {/* LISTADO filtrado */}
-        {!loading && !error && filteredDestinations.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filteredDestinations.map((dest) => (
-              <article
-              key={dest.id}
-              className="rounded-2xl overflow-hidden border border-slate-800 bg-slate-900/60 shadow hover:border-emerald-500/70 hover:shadow-emerald-500/10 transition"
-              >
-    {/* Envolvemos todo el contenido en un Link para que al hacer clic en cualquier parte de la tarjeta navegue al detalle de ese destino. */}
-      <Link to={`/destinations/${dest.id}`} className="block">
-        {/* Imagen principal */}
-        <div className="h-40 w-full bg-slate-800 overflow-hidden">
-          {dest.images && dest.images.length > 0 ? (
-            <img
-              src={dest.images[0]}
-              alt={dest.name}
-              className="h-full w-full object-cover hover:scale-105 transition"
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-              Sin imagen
-            </div>
-          )}
-        </div>
-
-        {/* Contenido */}
-        <div className="p-4 space-y-2">
-          <h2 className="text-lg font-semibold text-slate-50">
-            {dest.name}
-          </h2>
-
-          <p className="text-xs text-slate-400">
-            País:{" "}
-            <span className="font-medium text-slate-300">
-              {dest.country || "N/D"}
-            </span>
-          </p>
-
-          <p className="text-sm text-slate-300 line-clamp-3">
-            {dest.summary || "Sin descripción disponible."}
-          </p>
-
-          {/* Tags */}
-          {dest.tags && dest.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {dest.tags.map((tag) => (
-                <Tag key={tag} text={tag} />
-              ))}
-            </div>
-          )}
-        </div>
-      </Link>
-    </article>
-  ))}
-
+              <DestinationCard key={dest.id || dest.name} destination={dest} />
+            ))}
           </div>
-        )}
-      </div>
-    );
-  }
+        </section>
+      )}
+    </div>
+  );
+}
 
-  export default DestinationsPage;
-
-    
+export default DestinationsPage;
