@@ -1,94 +1,139 @@
 // src/pages/TripDetailPage.jsx
 //
-// Esta pantalla muestra el detalle de UN viaje específico (Trip),
-// usando el endpoint protegido:
+// Esta pantalla muestra el detalle de UN viaje específico (Trip)
+// y el flujo completo de generación de itinerario:
 //
-//   GET /api/trips/:id
+//   1) Carga el viaje desde el backend (GET /api/trips/:id)
+//   2) Intenta cargar si ya existe un itinerario guardado para ese viaje
+//      (GET /api/itineraries?tripId=...)
+//   3) Permite generar un nuevo itinerario con el motor de REGLAS
+//      (POST /api/trips/:id/generate-itinerary)
+//   4) Permite ENRIQUECER ese itinerario usando el modo "IA local"
+//      (POST /api/itineraries/:id/enrich-with-ai)
 //
-// En este paso, además, sumamos el feature clave:
-//   POST /api/trips/:id/generate-itinerary
-//
-// para generar un itinerario inteligente basado en el viaje,
-// y lo mostramos en una UI tipo "timeline" simple.
-//
-// Más adelante podremos:
-// - enriquecer itinerarios con IA,
-// - listar itinerarios existentes,
-// - permitir regenerar, etc.
+// El objetivo es mostrar claramente la arquitectura de IA híbrida:
+//   - El motor de reglas siempre funciona aunque no haya IA externa.
+//   - El enriquecimiento con IA es opcional y tiene fallback:
+//       si falla, el itinerario base sigue estando disponible.
 
-import { useContext, useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useContext, useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import apiClient from '../services/apiClient';
+import { AuthContext } from '../context/AuthContext.jsx';
 
-// Cliente axios con baseURL = http://localhost:3000
-import apiClient from "../services/apiClient";
+// Función auxiliar para transformar un timeOfDay técnico
+// en una etiqueta más humana para la UI.
+function getTimeOfDayLabel(timeOfDay) {
+  switch (timeOfDay) {
+    case 'morning':
+      return 'Mañana';
+    case 'afternoon':
+      return 'Tarde';
+    case 'evening':
+      return 'Noche';
+    default:
+      return 'Actividad';
+  }
+}
 
-// Contexto de autenticación: necesitamos el token para el header Authorization
-import { AuthContext } from "../context/AuthContext.jsx";
+// Función auxiliar para mostrar de forma amigable la fuente del itinerario.
+// Por ejemplo:
+//   - "Motor de reglas"   → aiModelUsed === "rules"
+//   - "IA local"          → cualquier otro valor (por ahora "local-ai-simulated")
+function getItinerarySourceLabel(aiModelUsed) {
+  if (!aiModelUsed || aiModelUsed === 'rules') {
+    return 'Generado por el motor de reglas';
+  }
+  return 'Enriquecido con IA local';
+}
 
+// Componente principal de la página de detalle de viaje.
 function TripDetailPage() {
-  // useParams nos permite leer el :id de la URL
-  // Ejemplo: /trips/trip123 → id = "trip123"
+  // Leemos el :id de la URL. Este es el ID del trip en el backend.
   const { id } = useParams();
 
-  // Desde el contexto obtenemos el token (para hablar con el backend)
-  // y los datos del usuario logueado (solo para mostrar quién es).
+  // Leemos token y user desde el contexto de autenticación.
+  // El token es necesario para llamar a los endpoints protegidos.
   const { token, user } = useContext(AuthContext);
 
-  // Estado donde guardamos el viaje que viene del backend
+  // Estado para los datos del viaje.
   const [trip, setTrip] = useState(null);
 
-  // Estados de experiencia de usuario para la carga del viaje
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  // Estados para la experiencia general de carga de la página.
+  const [loading, setLoading] = useState(true);      // Mientras se carga el trip.
+  const [error, setError] = useState(null);          // Errores al cargar el trip.
 
-  // Estados para la generación de itinerario
+  // Estado para el itinerario generado (reglas o IA).
   const [generatedItinerary, setGeneratedItinerary] = useState(null);
+
+  // Estados para la generación "base" por reglas.
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
 
-  // Este flag nos sirve solo para no intentar cargar itinerarios
-  // varias veces de manera innecesaria.
+  // Estados para el enriquecimiento con IA.
+  const [enriching, setEnriching] = useState(false);
+  const [enrichError, setEnrichError] = useState(null);
+
+  // Flag para asegurarnos de que el intento de carga de itinerario inicial
+  // (GET /api/itineraries?tripId=...) se ejecute solo una vez.
   const [initialItineraryLoaded, setInitialItineraryLoaded] = useState(false);
 
-
-  // Cuando se monta la página (o cambia el id), pedimos el viaje al backend
+  // ---------------------------------------------------------------------------
+  // 1) useEffect: cargar el viaje desde el backend
+  // ---------------------------------------------------------------------------
   useEffect(() => {
+    // Si no hay id en la URL, dejamos un error claro.
+    if (!id) {
+      setError('No se encontró el ID del viaje en la URL.');
+      setLoading(false);
+      return;
+    }
+
+    // Si no hay token, probablemente el usuario no esté autenticado.
+    // Igual mostramos un mensaje claro.
+    if (!token) {
+      setError('Tu sesión no es válida. Iniciá sesión nuevamente.');
+      setLoading(false);
+      return;
+    }
+
     const fetchTrip = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        // Si no tenemos token por alguna razón (aunque la ruta está protegida),
-        // mostramos un mensaje claro.
-        if (!token) {
-          setError("No hay token de sesión. Iniciá sesión nuevamente.");
-          setLoading(false);
-          return;
-        }
-
         // Llamada real al backend:
-        // GET /api/trips/:id con Authorization: Bearer <token>
+        //   GET /api/trips/:id
         const res = await apiClient.get(`/api/trips/${id}`, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
-        // Según tu backend, la respuesta puede ser:
-        // { ok: true, trip: { ... } }
+        // El backend responde algo como:
+        //   { ok: true, trip: { ... } }
+        // o, en algunos casos, directamente el objeto trip.
         const tripData = res.data.trip || res.data;
         setTrip(tripData);
 
-        console.log("Detalle de viaje:", tripData);
+        console.log('Detalle de viaje cargado:', tripData);
       } catch (err) {
-        console.error("Error al cargar el viaje:", err);
+        console.error('Error al cargar el viaje:', err);
 
-        if (err.response && err.response.status === 404) {
-          setError("No encontramos este viaje. Puede que haya sido eliminado.");
-        } else if (err.response && err.response.status === 403) {
-          setError("No tenés permiso para ver este viaje (no sos la persona dueña).");
+        if (err.response && err.response.data) {
+          const apiError = err.response.data.error;
+
+          if (apiError === 'NOT_FOUND' || apiError === 'TRIP_NOT_FOUND') {
+            setError('No encontramos este viaje. Puede que haya sido eliminado.');
+          } else if (apiError === 'UNAUTHORIZED' || apiError === 'INVALID_TOKEN') {
+            setError('No tenés permiso para ver este viaje. Iniciá sesión nuevamente.');
+          } else {
+            setError('Ocurrió un error al cargar el viaje. Probá de nuevo en unos minutos.');
+          }
         } else {
-          setError("No pudimos cargar la información de este viaje.");
+          setError(
+            'No pudimos conectarnos con el servidor para cargar los datos del viaje.'
+          );
         }
       } finally {
         setLoading(false);
@@ -98,101 +143,78 @@ function TripDetailPage() {
     fetchTrip();
   }, [id, token]);
 
-
-  // Cuando tenemos un trip y un token, intentamos cargar
-  // si ya existe algún itinerario guardado para este viaje
-  // usando GET /api/itineraries?tripId=...
-  //
-  // La idea es:
-  // - Si el backend ya tiene itinerarios para este trip,
-  //   mostramos el más reciente sin necesidad de tocar el botón.
-  // - Si no hay itinerarios, no mostramos nada y esperamos
-  //   a que la persona genere uno nuevo.
+  // ---------------------------------------------------------------------------
+  // 2) useEffect: intentar cargar un itinerario existente para este viaje
+  // ---------------------------------------------------------------------------
   useEffect(() => {
+    // Si ya intentamos cargar el itinerario inicial, no lo hacemos de nuevo.
+    if (initialItineraryLoaded) return;
+
+    // Necesitamos tanto id de viaje como token.
+    if (!id || !token) return;
+
     const fetchExistingItinerary = async () => {
       try {
-        // Si no tenemos token o ya intentamos cargar antes, salimos.
-        if (!token || initialItineraryLoaded) return;
-
-        // Marcamos que ya intentamos cargar, así no repetimos
-        // la llamada en cada render.
         setInitialItineraryLoaded(true);
 
-        console.log("Buscando itinerarios existentes para el viaje:", id);
+        console.log('Buscando itinerarios existentes para el viaje:', id);
 
-        const res = await apiClient.get(`/api/itineraries`, {
-          params: { tripId: id },
+        // GET /api/itineraries?tripId=...&limit=1
+        const res = await apiClient.get('/api/itineraries', {
+          params: { tripId: id, limit: 1 },
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
-        // El backend debería devolver algo como:
-        // { ok: true, count: N, itineraries: [ ... ] }
+        // El backend debería responder algo como:
+        //   { ok: true, count: N, itineraries: [ ... ] }
         const itineraries = res.data.itineraries || res.data.items || [];
 
         if (Array.isArray(itineraries) && itineraries.length > 0) {
-          // Elegimos el último itinerario de la lista.
-          // Podríamos ordenarlos por fecha si fuera necesario,
-          // pero asumimos que el backend ya los devuelve en orden razonable.
-          const latest = itineraries[itineraries.length - 1];
+          // Tomamos el primero (el más reciente, según cómo liste el backend).
+          const existing = itineraries[0];
+          setGeneratedItinerary(existing);
 
-          console.log("Itinerario existente cargado desde backend:", latest);
-          setGeneratedItinerary(latest);
+          console.log('Itinerario existente encontrado:', existing);
         } else {
-          console.log("No hay itinerarios guardados para este viaje todavía.");
+          console.log('No hay itinerarios previos para este viaje.');
         }
       } catch (err) {
-        // Si falla esta carga inicial, no rompemos la UI:
-        // simplemente logueamos y dejamos que la persona
-        // genere un itinerario manualmente con el botón.
-        console.error("Error al buscar itinerarios existentes:", err);
+        console.error('Error al buscar itinerarios existentes:', err);
+        // No consideramos esto un error "fatal" para la página:
+        // simplemente mostraremos el botón para generar uno nuevo.
       }
     };
 
     fetchExistingItinerary();
   }, [id, token, initialItineraryLoaded]);
 
-
-
-  // Función de ayuda para mostrar fechas en formato amigable
-  const formatDate = (value) => {
-    if (!value) return "Sin especificar";
-    try {
-      return new Date(value).toLocaleDateString("es-AR");
-    } catch {
-      return value;
-    }
-  };
-
-  // Handler para el botón "Generar itinerario"
-  //
-  // Este método:
-  // - llama al endpoint POST /api/trips/:id/generate-itinerary
-  // - muestra estado "generating" mientras tanto
-  // - guarda el itinerario devuelto en generatedItinerary
-  // - maneja errores y los convierte en mensajes humanos
+  // ---------------------------------------------------------------------------
+  // Handler: generar un nuevo itinerario usando el motor de reglas
+  // ---------------------------------------------------------------------------
   const handleGenerateItinerary = async () => {
     try {
-      // Limpiamos error previo y marcamos que estamos generando
+      // Limpiamos errores anteriores de generación y enriquecimiento.
       setGenerateError(null);
+      setEnrichError(null);
       setGenerating(true);
 
-      // Chequeo defensivo: si no hay token, no intentamos llamar al backend
       if (!token) {
-        setGenerateError("Tu sesión no es válida. Iniciá sesión nuevamente.");
+        setGenerateError('Tu sesión no es válida. Iniciá sesión nuevamente.');
         setGenerating(false);
         return;
       }
 
-      console.log("Generando itinerario para el viaje:", id);
+      console.log('Generando itinerario para el viaje:', id);
 
       // Llamada real al backend:
-      // POST /api/trips/:id/generate-itinerary
+      //   POST /api/trips/:id/generate-itinerary
       //
-      // Según tu contrato, el body puede incluir destinationId opcional.
-      // Por ahora mandamos un body vacío, o podrías armar:
-      // { destinationId: trip.destinationId } si lo tenés guardado.
+      // En esta primera versión no enviamos destinationId en el body.
+      // El backend tiene un esquema donde destinationId es opcional,
+      // así que un body vacío {} es válido. Si más adelante sumamos
+      // un selector de destino, podríamos enviar destinationId aquí.
       const res = await apiClient.post(
         `/api/trips/${id}/generate-itinerary`,
         {},
@@ -204,40 +226,34 @@ function TripDetailPage() {
       );
 
       // Respuesta esperada:
-      // {
-      //   ok: true,
-      //   itinerary: {
-      //     id: "it123",
-      //     tripId: "trip123",
-      //     data: { days: [ ... ] },
-      //     ...
-      //   }
-      // }
-      const itineraryData = res.data.itinerary || res.data;
-      setGeneratedItinerary(itineraryData);
+      //   { ok: true, itinerary: { ... } }
+      const itinerary = res.data.itinerary || res.data;
 
-      console.log("Itinerario generado:", itineraryData);
+      setGeneratedItinerary(itinerary);
+
+      console.log('Itinerario generado por reglas:', itinerary);
     } catch (err) {
-      console.error("Error al generar el itinerario:", err);
+      console.error('Error al generar el itinerario:', err);
 
-      // Intentamos traducir el error del backend a algo más humano
       if (err.response && err.response.data) {
-        const apiErrorCode = err.response.data.error;
+        const apiError = err.response.data.error;
 
-        if (apiErrorCode === "TRIP_NOT_FOUND") {
-          setGenerateError("El viaje no existe o fue eliminado.");
-        } else if (apiErrorCode === "FORBIDDEN_TRIP_OWNER") {
-          setGenerateError("No tenés permiso para generar itinerarios de este viaje.");
-        } else if (apiErrorCode === "RATE_LIMIT_EXCEEDED") {
-          setGenerateError("Hiciste demasiadas solicitudes seguidas. Probá de nuevo en unos minutos.");
+        if (apiError === 'TRIP_NOT_FOUND') {
+          setGenerateError('No encontramos este viaje para generar un itinerario.');
+        } else if (apiError === 'UNAUTHORIZED' || apiError === 'INVALID_TOKEN') {
+          setGenerateError('No tenés permiso para generar itinerarios en este viaje.');
+        } else if (apiError === 'VALIDATION_ERROR') {
+          setGenerateError(
+            'Hay datos del viaje que no son válidos. Revisá fechas e intereses.'
+          );
         } else {
           setGenerateError(
-            `No se pudo generar el itinerario. Código de error: ${apiErrorCode}`
+            'Ocurrió un error inesperado al generar el itinerario. Probá de nuevo.'
           );
         }
       } else {
         setGenerateError(
-          "No pudimos comunicarnos con el servidor para generar el itinerario."
+          'No pudimos conectarnos con el servidor para generar el itinerario.'
         );
       }
     } finally {
@@ -245,13 +261,108 @@ function TripDetailPage() {
     }
   };
 
-  // Componente auxiliar para renderizar el contenido del itinerario
+  // ---------------------------------------------------------------------------
+  // Handler: enriquecer el itinerario existente usando el modo "IA local"
+  // ---------------------------------------------------------------------------
+  const handleEnrichItinerary = async () => {
+    try {
+      // Limpiamos errores previos y marcamos estado de carga.
+      setEnrichError(null);
+      setEnriching(true);
+
+      // Chequeos defensivos: necesitamos token e itinerario cargado.
+      if (!token) {
+        setEnrichError('Tu sesión no es válida. Iniciá sesión nuevamente.');
+        setEnriching(false);
+        return;
+      }
+
+      if (!generatedItinerary || !generatedItinerary.id) {
+        setEnrichError(
+          'Primero generá un itinerario base antes de usar el modo IA.'
+        );
+        setEnriching(false);
+        return;
+      }
+
+      console.log(
+        'Enriqueciendo itinerario con IA local. ID:',
+        generatedItinerary.id
+      );
+
+      // Llamada al backend:
+      //   POST /api/itineraries/:id/enrich-with-ai
+      //
+      // Enviamos algunos parámetros opcionales para el "tono".
+      const res = await apiClient.post(
+        `/api/itineraries/${generatedItinerary.id}/enrich-with-ai`,
+        {
+          tone: 'relajado', // puede ser 'neutral', 'relajado' o 'aventurero'
+          locale: 'es-AR',
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      // Respuesta esperada:
+      //   { ok: true, itinerary: { ... } }
+      const updated = res.data.itinerary || res.data;
+
+      // Reemplazamos el itinerario actual por la versión enriquecida.
+      setGeneratedItinerary(updated);
+
+      console.log('Itinerario enriquecido con IA local:', updated);
+    } catch (err) {
+      console.error('Error al enriquecer el itinerario:', err);
+
+      // La gracia del modo híbrido es que, si falla el enriquecimiento,
+      // el itinerario base sigue estando en generatedItinerary.
+      // Sólo mostramos un mensaje humano de error.
+      if (err.response && err.response.data) {
+        const apiError = err.response.data.error;
+
+        if (apiError === 'ITINERARY_NOT_FOUND') {
+          setEnrichError(
+            'No encontramos el itinerario en el servidor. Probá generarlo de nuevo.'
+          );
+        } else if (apiError === 'UNAUTHORIZED' || apiError === 'INVALID_TOKEN') {
+          setEnrichError(
+            'No tenés permiso para enriquecer este itinerario. Iniciá sesión nuevamente.'
+          );
+        } else {
+          setEnrichError(
+            'Hubo un problema al usar el modo IA. Tu itinerario base sigue disponible.'
+          );
+        }
+      } else {
+        setEnrichError(
+          'No pudimos conectarnos con el servidor para usar el modo IA. Intentá más tarde.'
+        );
+      }
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render auxiliar: dibujar la estructura del itinerario como timeline simple
+  // ---------------------------------------------------------------------------
   const renderItinerary = () => {
-    if (!generatedItinerary || !generatedItinerary.data) return null;
+    if (!generatedItinerary) {
+      return (
+        <p className="text-sm text-slate-300">
+          Todavía no generaste un itinerario para este viaje. Usá el botón
+          "Generar itinerario" para crear uno con el motor de reglas.
+        </p>
+      );
+    }
 
-    const days = generatedItinerary.data.days || [];
+    const data = generatedItinerary.data;
 
-    if (!Array.isArray(days) || days.length === 0) {
+    if (!data || !Array.isArray(data.days) || data.days.length === 0) {
       return (
         <p className="text-sm text-slate-300">
           El itinerario no tiene días cargados. Revisá la lógica del motor de reglas.
@@ -261,77 +372,91 @@ function TripDetailPage() {
 
     return (
       <div className="space-y-4">
-        {days.map((day) => (
-          <div
+        {data.days.map((day) => (
+          <article
             key={day.day}
-            className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 space-y-2"
+            className="rounded-xl border border-slate-800 bg-slate-900/80 p-4 space-y-3"
           >
-            {/* Encabezado del día */}
-            <div className="flex items-center justify-between">
+            <header className="flex items-baseline justify-between gap-2">
               <div>
-                <p className="text-xs text-slate-400">Día {day.day}</p>
-                <p className="text-sm font-semibold text-slate-50">
-                  {day.date ? formatDate(day.date) : "Fecha no especificada"}
-                </p>
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Día {day.day}
+                </h3>
+                {day.date && (
+                  <p className="text-xs text-slate-400">{day.date}</p>
+                )}
               </div>
-            </div>
 
-            {/* Lista de periodos (mañana, tarde, noche, etc.) */}
-            <div className="mt-2 space-y-3">
-              {(day.periods || []).map((period, index) => (
-                <div
-                  key={`${day.day}-${index}`}
-                  className="rounded-lg border border-slate-800 bg-slate-950/60 p-3 space-y-1"
-                >
-                  <p className="text-xs uppercase tracking-wide text-emerald-300">
-                    {period.timeOfDay || "Sin horario"}
-                  </p>
-                  <p className="text-sm font-semibold text-slate-50">
-                    {period.title || "Actividad sin título"}
-                  </p>
-                  <p className="text-xs text-slate-300">
-                    {period.description || "Sin descripción detallada."}
-                  </p>
+              {/* Etiqueta pequeña con la fuente del itinerario */}
+              <span className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                {getItinerarySourceLabel(generatedItinerary.aiModelUsed)}
+              </span>
+            </header>
 
-                  <div className="flex flex-wrap gap-3 text-[11px] text-slate-400 mt-1">
-                    {period.activityId && (
-                      <span className="font-mono">
-                        Actividad: {period.activityId}
-                      </span>
-                    )}
-                    {typeof period.estimatedCost === "number" && (
-                      <span>
-                        Costo estimado:{" "}
-                        {period.estimatedCost.toLocaleString("es-AR")} ARS
-                      </span>
-                    )}
-                    {period.notes && (
-                      <span className="italic">
-                        Notas: {period.notes}
-                      </span>
-                    )}
+            <div className="space-y-2">
+              {Array.isArray(day.periods) && day.periods.length > 0 ? (
+                day.periods.map((period, index) => (
+                  <div
+                    key={`${day.day}-${index}`}
+                    className="flex gap-3 rounded-lg border border-slate-800 bg-slate-950/60 p-3"
+                  >
+                    <div className="mt-1 h-2 w-2 flex-none rounded-full bg-emerald-400" />
+
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-[11px] uppercase tracking-wide text-emerald-300">
+                          {getTimeOfDayLabel(period.timeOfDay)}
+                        </span>
+                        {period.title && (
+                          <h4 className="text-sm font-semibold text-slate-100">
+                            {period.title}
+                          </h4>
+                        )}
+                      </div>
+
+                      {period.description && (
+                        <p className="text-xs leading-relaxed text-slate-300">
+                          {period.description}
+                        </p>
+                      )}
+
+                      {typeof period.estimatedCost === 'number' && (
+                        <p className="text-[11px] text-slate-400">
+                          Costo estimado:{' '}
+                          <span className="font-mono">
+                            USD {period.estimatedCost}
+                          </span>
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p className="text-xs text-slate-400">
+                  No hay actividades asignadas para este día.
+                </p>
+              )}
             </div>
-          </div>
+          </article>
         ))}
       </div>
     );
   };
 
+  // ---------------------------------------------------------------------------
+  // Render principal de la página
+  // ---------------------------------------------------------------------------
   return (
     <div className="space-y-6">
-      {/* Encabezado general de la sección */}
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-slate-50">
-          Detalle del viaje
-        </h1>
-        <p className="text-sm text-slate-300">
-          Acá ves la información completa de este viaje. Ya podés generar
-          un itinerario automático basado en estas preferencias.
-        </p>
-      </header>
+      {/* Encabezado de navegación / migas simples */}
+      <div className="text-xs text-slate-400 flex items-center gap-2">
+        <Link
+          to="/trips"
+          className="hover:text-emerald-400 transition-colors underline-offset-2 hover:underline"
+        >
+          ← Volver a tus viajes
+        </Link>
+      </div>
 
       {/* Estados globales: loading / error */}
       {loading && (
@@ -346,121 +471,84 @@ function TripDetailPage() {
         </div>
       )}
 
-      {/* Si no hay loading ni error y tenemos viaje, lo mostramos */}
+      {/* Contenido principal cuando hay trip */}
       {!loading && !error && trip && (
         <div className="space-y-4">
           {/* Tarjeta principal con info del viaje */}
           <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-3">
             <div className="flex flex-col gap-1">
               <h2 className="text-xl font-semibold text-slate-50">
-                {trip.title || "Viaje sin título"}
+                {trip.title || 'Viaje sin título'}
               </h2>
 
               <p className="text-xs text-slate-400">
                 ID del viaje:&nbsp;
                 <span className="font-mono text-[11px] text-slate-300">
-                  {trip.id || "(no disponible)"}
+                  {trip.id || '(no disponible)'}
                 </span>
               </p>
 
-              {user && (
-                <p className="text-xs text-slate-400">
-                  Usuario:&nbsp;
+              {trip.startDate && trip.endDate && (
+                <p className="text-sm text-slate-300">
                   <span className="font-medium text-slate-200">
-                    {user.email}
-                  </span>
+                    Fechas:
+                  </span>{' '}
+                  {trip.startDate} → {trip.endDate}
+                </p>
+              )}
+
+              {Array.isArray(trip.interests) && trip.interests.length > 0 && (
+                <p className="text-xs text-slate-300">
+                  <span className="font-medium text-slate-200">
+                    Intereses:
+                  </span>{' '}
+                  {trip.interests.join(', ')}
                 </p>
               )}
             </div>
 
-            {/* Fechas y estado en formato de resumen */}
-            <div className="grid gap-4 md:grid-cols-3 text-sm text-slate-300">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Fecha de inicio</span>
-                <span>{formatDate(trip.startDate)}</span>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Fecha de fin</span>
-                <span>{formatDate(trip.endDate)}</span>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Estado</span>
-                <span className="inline-flex w-fit rounded-full bg-slate-800 px-3 py-1 text-xs capitalize">
-                  {trip.status || "sin estado"}
-                </span>
-              </div>
-            </div>
-
-            {/* Presupuesto e intereses */}
-            <div className="grid gap-4 md:grid-cols-[1fr,2fr] text-sm text-slate-300">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Presupuesto estimado</span>
-                <span>
-                  {trip.budget
-                    ? `${trip.budget.toLocaleString("es-AR")} ARS`
-                    : "No especificado"}
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Intereses del viaje</span>
-                {trip.interests && trip.interests.length > 0 ? (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {trip.interests.map((interest) => (
-                      <span
-                        key={interest}
-                        className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-200 text-[11px] border border-slate-700"
-                      >
-                        {interest}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-xs text-slate-400">
-                    Este viaje aún no tiene intereses configurados.
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Metadata del viaje */}
-            <div className="grid gap-4 md:grid-cols-2 text-xs text-slate-400">
-              <div>
-                <span className="text-slate-500">Creado:&nbsp;</span>
-                {trip.createdAt ? formatDate(trip.createdAt) : "N/D"}
-              </div>
-              <div>
-                <span className="text-slate-500">Actualizado:&nbsp;</span>
-                {trip.updatedAt ? formatDate(trip.updatedAt) : "N/D"}
-              </div>
-            </div>
-
-            {/* CTA para generar itinerario */}
-            <div className="mt-4 flex flex-col gap-2">
+            {/* Acciones relacionadas con el itinerario */}
+            <div className="flex flex-wrap gap-3 pt-2 border-t border-slate-800 mt-2">
               <button
                 type="button"
                 onClick={handleGenerateItinerary}
                 disabled={generating}
-                className="inline-flex items-center justify-center gap-2 rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-60 disabled:cursor-not-allowed transition"
+                className="inline-flex items-center rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-medium text-emerald-950 hover:bg-emerald-400 transition disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {generating ? "Generando itinerario..." : "Generar itinerario para este viaje"}
-                <span>🧭</span>
+                {generating ? 'Generando itinerario...' : 'Generar itinerario'}
               </button>
 
-              <p className="text-[11px] text-slate-500">
-                El itinerario se genera a partir de las fechas, presupuesto e intereses
-                del viaje. Más adelante, vas a poder enriquecerlo con IA.
-              </p>
-
-              {/* Mensaje de error específico de la generación */}
-              {generateError && (
-                <div className="rounded-xl border border-red-700 bg-red-900/40 p-3 text-[11px] text-red-100">
-                  {generateError}
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={handleEnrichItinerary}
+                disabled={
+                  enriching ||
+                  !generatedItinerary ||
+                  generating
+                }
+                className="inline-flex items-center rounded-full border border-emerald-500/60 bg-transparent px-4 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/10 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {enriching
+                  ? 'Enriqueciendo con IA...'
+                  : 'Enriquecer itinerario con IA'}
+              </button>
             </div>
+
+            {/* Mensajes de error de los flujos de generación / IA */}
+            {(generateError || enrichError) && (
+              <div className="mt-2 space-y-1 text-xs">
+                {generateError && (
+                  <div className="rounded-lg border border-amber-600 bg-amber-900/30 px-3 py-2 text-amber-100">
+                    {generateError}
+                  </div>
+                )}
+                {enrichError && (
+                  <div className="rounded-lg border border-sky-600 bg-sky-900/30 px-3 py-2 text-sky-100">
+                    {enrichError}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           {/* Bloque donde mostramos el itinerario generado, si existe */}
@@ -468,15 +556,30 @@ function TripDetailPage() {
             <section className="rounded-2xl border border-emerald-600 bg-slate-900/80 p-5 space-y-3">
               <header className="flex flex-col gap-1">
                 <h2 className="text-lg font-semibold text-emerald-300">
-                  Itinerario generado 🧠✨
+                  Itinerario generado
                 </h2>
-                <p className="text-xs text-slate-300">
-                  Este es el resultado del motor de reglas para este viaje. Cada día
-                  tiene una serie de bloques (mañana, tarde, noche, etc.).
+                <p className="text-xs text-emerald-200/80">
+                  Este es el plan de viaje que NomadIQ armó para vos. Primero
+                  se genera con el motor de reglas y, si querés, podés
+                  enriquecerlo con el modo IA.
                 </p>
               </header>
 
               {renderItinerary()}
+            </section>
+          )}
+
+          {/* Estado vacío cuando todavía no hay itinerario */}
+          {!generatedItinerary && (
+            <section className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5">
+              <h2 className="text-sm font-semibold text-slate-100 mb-1">
+                Todavía no hay un itinerario para este viaje
+              </h2>
+              <p className="text-xs text-slate-300">
+                Usá el botón <span className="font-semibold">"Generar itinerario"</span>{' '}
+                para crear un plan de viaje automático con el motor de reglas.
+                Más adelante podés mejorarlo con el modo IA.
+              </p>
             </section>
           )}
         </div>
