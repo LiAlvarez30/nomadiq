@@ -1,0 +1,40 @@
+### 1. Verificar que el servidor está vivo
+GET http://localhost:3000/
+
+### 2. Registrar un usuario nuevo
+POST http://localhost:3000/auth/register
+Content-Type: application/json
+
+{
+  "email": "liliana@test.com",
+  "password": "Password123!",
+  "name": "Liliana Dev"
+}
+
+### 3. Iniciar Sesión (Login)
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+
+{
+  "email": "liliana@test.com",
+  "password": "Password123!"
+}
+
+
+### ------------------------------------------------------------
+### VARIABLES
+### ------------------------------------------------------------
+@authToken = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJCZXp3ZVdLcFhmOEd6UFhDSDU1biIsImVtYWlsIjoibGlsaWFuYUB0ZXN0LmNvbSIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzYzNTczMDU1LCJleHAiOjE3NjM2NTk0NTV9.UFvos2KLXDDqeYkPXJQpBY6MUv2uVotu1rkEzVY2AqY
+
+### 4. Crear un nuevo Viaje (Trip)
+POST http://localhost:3000/api/trips
+Authorization: Bearer {{authToken}}
+Content-Type: application/json
+
+{
+  "title": "Escapada a Japón",
+  "startDate": "2025-10-01",
+  "endDate": "2025-10-10",
+  "budget": 3500,
+  "interests": ["tecnología", "comida"]
+}

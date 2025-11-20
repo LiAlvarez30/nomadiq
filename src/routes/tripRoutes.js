@@ -28,7 +28,8 @@ import {
   getById,
   list,
   update,
-  remove
+  remove,
+  generateItinerary
 } from '../controllers/tripController.js';
 
 // Creamos una instancia de Router para agrupar las rutas de trips.
@@ -83,3 +84,20 @@ router.delete('/:id', authMiddleware, remove);
 
 // Exportamos el router para poder usarlo en index.js.
 export default router;
+
+// -----------------------------------------------------------------------------
+// POST /api/trips/:id/generate-itinerary
+// -----------------------------------------------------------------------------
+// Generar un itinerario para un trip puntual usando el motor de reglas.
+// Protegido con authMiddleware: solo el dueño del trip puede generar
+// itinerarios para ese viaje.
+//
+// El controlador generateItinerary se encarga de:
+// - Validar el body con Zod (destinationId opcional).
+// - Verificar que el trip exista y pertenezca al usuario autenticado.
+// - Pedir actividades (si se envía destinationId).
+// - Generar la estructura "data" con generateItineraryRules.
+// - Guardar el itinerario en Firestore con createItinerary.
+// - Devolver el itinerario en formato público.
+//
+router.post('/:id/generate-itinerary', authMiddleware, generateItinerary);
