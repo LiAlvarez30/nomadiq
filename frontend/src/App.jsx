@@ -1,57 +1,52 @@
 // src/App.jsx
 
-// Importamos el sistema de rutas de React Router.
-import { Routes, Route, Link } from 'react-router-dom';
+// Este archivo define la estructura principal de la aplicación en el frontend.
+// Acá colocamos cosas "globales" como:
+// - la barra de navegación (Navbar),
+// - el contenedor general de las páginas,
+// - y las rutas (Home, Login, etc.).
 
-// Importamos las páginas que acabamos de crear.
+// Importamos componentes de React Router para definir las rutas de la SPA.
+import { Routes, Route } from 'react-router-dom';
+
+// Importamos las páginas que ya creaste.
 import HomePage from './pages/HomePage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 
-// Este componente App ahora funciona como "shell" principal de la SPA.
-// - Define el layout base (fondo, header, contenedor).
-// - Declara las rutas principales de la aplicación.
-// Más adelante podemos extraer el layout a un componente separado.
+// Importamos el Navbar que acabamos de crear.
+// La idea es que este Navbar se muestre en todas las pantallas.
+import Navbar from './components/Navbar.jsx';
+
 function App() {
   return (
+    // Este div envuelve toda la aplicación visual.
+    // Usamos clases de Tailwind para el fondo y el texto general.
     <div className="min-h-screen bg-slate-950 text-slate-50">
-      {/* Header simple con el nombre de la app y enlaces básicos */}
-      <header className="border-b border-slate-800">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500 text-slate-900 font-bold">
-              NQ
-            </span>
-            <span className="font-semibold tracking-tight">NomadIQ</span>
-          </div>
+      {/* Navbar fijo en la parte superior.
+          Lo colocamos fuera del contenedor principal de las páginas
+          para que siempre esté visible, sin importar la ruta actual. */}
+      <Navbar />
 
-          {/* Navegación mínima para movernos entre Home y Login.
-             Más adelante, cuando tengamos auth, esto cambiará. */}
-          <nav className="flex items-center gap-4 text-sm">
-            <Link
-              to="/"
-              className="text-slate-300 hover:text-white transition-colors"
-            >
-              Home
-            </Link>
-            <Link
-              to="/login"
-              className="px-3 py-1.5 rounded-full border border-emerald-500/70 text-emerald-200 text-xs hover:bg-emerald-500 hover:text-slate-950 transition-colors"
-            >
-              Iniciar sesión
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      {/* Contenido principal donde se van a renderizar las páginas */}
-      <main className="max-w-5xl mx-auto px-4 py-8">
+      {/* Contenedor principal de contenido.
+          Le damos un max-width para que no se vea demasiado ancho
+          en pantallas grandes, y centramos con mx-auto. */}
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        {/* Acá definimos las rutas principales de la app.
+            Cada <Route> dice: "si la URL es X, mostrá el componente Y". */}
         <Routes>
-          {/* Ruta raíz: muestra la Home con el healthcheck */}
+          {/* Ruta raíz: pantalla de inicio / dashboard básico.
+              Por ahora muestra el healthcheck del backend. */}
           <Route path="/" element={<HomePage />} />
 
-          {/* Ruta /login: por ahora un placeholder,
-              luego será el formulario real de autenticación */}
+          {/* Ruta de login: pantalla donde el usuario puede iniciar sesión. */}
           <Route path="/login" element={<LoginPage />} />
+
+          {/* Más adelante podremos agregar:
+              - /trips
+              - /destinations
+              - /itineraries
+              - /admin
+              etc. */}
         </Routes>
       </main>
     </div>

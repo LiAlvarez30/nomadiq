@@ -1,49 +1,56 @@
 // src/pages/LoginPage.jsx
 
-// Importamos useState para manejar los datos del formulario (email, password)
-// y los estados de la interfaz (loading, error, success).
-// Importamos useContext para poder leer el contexto de autenticación.
-import { useState, useContext } from 'react';
+// Importamos useState para manejar los datos del formulario y estados de la UI,
+// useContext para leer el contexto de autenticación y useEffect para reaccionar
+// cuando cambia el usuario logueado (por ejemplo, cuando hacemos logout desde el Navbar).
+import { useState, useContext, useEffect } from 'react';
 
-// Importamos el cliente Axios configurado para apuntar al backend de NomadIQ.
-// apiClient.post('/auth/login', ...) llama a http://localhost:3000/auth/login
+// Cliente Axios configurado para apuntar al backend de NomadIQ.
 import apiClient from '../services/apiClient';
 
-// Importamos el AuthContext que creamos.
-// Desde este contexto podemos acceder a:
-// - user   → usuario actualmente logueado
-// - token  → token JWT actual
-// - login  → función para guardar user + token en el contexto
-// - logout → función para limpiar la sesión (user + token + localStorage)
+// Contexto de autenticación: desde acá obtenemos user y login.
 import { AuthContext } from '../context/AuthContext.jsx';
 
 function LoginPage() {
   // -------------------------------------------------------
-  // 1) Accedemos al contexto de autenticación
+  // 1) Leemos el contexto de autenticación
   // -------------------------------------------------------
   //
-  // useContext(AuthContext) nos devuelve { user, token, login, logout }.
-  // En esta pantalla vamos a usar:
-  // - user   → para mostrar quién está logueado
-  // - login  → para guardar la sesión al loguear
-  // - logout → para cerrar sesión desde un botón
-  const { user, login, logout } = useContext(AuthContext);
+  // Nos interesan:
+  // - user  → usuario actualmente logueado (o null)
+  // - login → función para guardar user + token cuando el backend valida credenciales
+  const { user, login } = useContext(AuthContext);
 
   // -------------------------------------------------------
-  // 2) Estados locales del formulario y la UI
+  // 2) Estados locales del formulario y la interfaz
   // -------------------------------------------------------
 
-  // Campos del formulario de login
+  // Valores que el usuario escribe en el formulario
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  // Estados para la experiencia de usuario
-  const [loading, setLoading] = useState(false);  // Mientras se llama al backend
-  const [error, setError] = useState(null);       // Mensaje de error visible
-  const [success, setSuccess] = useState(null);   // Mensaje de éxito visible
+  // Estados de UX
+  const [loading, setLoading] = useState(false);  // mientras hablamos con el backend
+  const [error, setError] = useState(null);       // mensaje de error visible
+  const [success, setSuccess] = useState(null);   // mensaje de éxito visible
 
   // -------------------------------------------------------
-  // 3) Manejo del submit del formulario (LOGIN)
+  // 3) Efecto para mantener coherente la UI con el contexto
+  // -------------------------------------------------------
+  //
+  // Si el usuario se desloguea desde el Navbar (logout),
+  // el contexto pone user = null. Cuando eso pasa, este efecto se dispara
+  // y aprovechamos para limpiar el mensaje de éxito en la pantalla de login
+  // para que no quede el cartel verde de "Bienvenido/a" cuando ya no hay sesión.
+  useEffect(() => {
+    if (!user) {
+      // Si no hay usuario, limpiamos el mensaje de éxito.
+      setSuccess(null);
+    }
+  }, [user]);
+
+  // -------------------------------------------------------
+  // 4) Manejo del submit del formulario (LOGIN)
   // -------------------------------------------------------
   const handleSubmit = async (event) => {
     // Evitamos que el navegador recargue la página.
@@ -58,28 +65,25 @@ function LoginPage() {
 
     try {
       // Llamada REAL al backend.
-      // Si las credenciales son correctas, el backend responde con:
-      // { ok: true, user: { ... }, token: "..." }
+      // Enviamos las credenciales al endpoint /auth/login.
       const response = await apiClient.post('/auth/login', {
         email,
         password,
       });
 
+      // Extraemos user y token de la respuesta del backend.
       const loggedUser = response.data.user;
       const token = response.data.token;
 
-      // Mostramos un mensaje de bienvenida.
+      // Mostramos un mensaje de bienvenida en esta pantalla.
       setSuccess(`Bienvenido/a, ${loggedUser.name}`);
 
-      // Guardamos el usuario y el token en el contexto de autenticación.
-      // Esto también los guarda en localStorage, gracias a la lógica en AuthContext.
+      // Guardamos usuario y token en el contexto (y en localStorage).
       login(loggedUser, token);
 
       console.log('Login exitoso:', response.data);
     } catch (err) {
-      // -------------------------------------------
-      // Manejo de errores de forma humana
-      // -------------------------------------------
+      // Manejo de errores con mensajes humanos.
       if (err.response && err.response.data) {
         const apiErrorCode = err.response.data.error;
 
@@ -96,61 +100,26 @@ function LoginPage() {
 
       console.error('Error al intentar hacer login:', err);
     } finally {
-      // Siempre apagamos el modo "cargando".
+      // Sea éxito o error, salimos del modo "cargando".
       setLoading(false);
     }
   };
 
   // -------------------------------------------------------
-  // 4) Manejo del logout (CERRAR SESIÓN)
-  // -------------------------------------------------------
-  //
-  // Esta función se dispara cuando el usuario hace clic en el botón
-  // "Cerrar sesión". Lo que hace es:
-  // - limpiar el contexto (user + token),
-  // - limpiar localStorage (gracias a AuthContext),
-  // - limpiar mensajes de éxito/errores en esta pantalla.
-  const handleLogout = () => {
-    // Llamamos a la función logout del contexto.
-    logout();
-
-    // Limpiamos cualquier mensaje que estuviera visible.
-    setError(null);
-    setSuccess(null);
-
-    // También podríamos limpiar los campos del formulario,
-    // para dejar todo como "estado inicial".
-    setEmail('');
-    setPassword('');
-  };
-
-  // -------------------------------------------------------
-  // 5) Render de la pantalla de login
+  // 5) Renderizado de la pantalla de login
   // -------------------------------------------------------
   return (
     <div className="max-w-md w-full mx-auto space-y-6">
-      {/* Encabezado de la página */}
-      <header className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Iniciar sesión en NomadIQ</h1>
-          <p className="mt-2 text-sm text-slate-300">
-            Ingresá tus credenciales para acceder a tu cuenta.
-          </p>
-        </div>
-
-        {/* Si hay un usuario logueado, mostramos un botón pequeño de "Cerrar sesión". */}
-        {user && (
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="text-xs px-3 py-1 rounded-full border border-slate-600 text-slate-200 hover:bg-slate-800 transition-colors"
-          >
-            Cerrar sesión
-          </button>
-        )}
+      {/* Encabezado de la página (ya sin botón de logout aquí;
+          el logout vive en el Navbar para no duplicar responsabilidades). */}
+      <header>
+        <h1 className="text-2xl font-semibold">Iniciar sesión en NomadIQ</h1>
+        <p className="mt-2 text-sm text-slate-300">
+          Ingresá tus credenciales para acceder a tu cuenta.
+        </p>
       </header>
 
-      {/* Tarjeta que contiene el formulario */}
+      {/* Tarjeta principal con el formulario */}
       <div className="p-5 rounded-2xl border border-slate-800 bg-slate-900/70 shadow-lg">
         {/* Mensaje de error (bloque rojo) */}
         {error && (
@@ -210,8 +179,8 @@ function LoginPage() {
           </button>
         </form>
 
-        {/* Bloque de información sobre la sesión actual.
-           Esto es muy útil para "ver" qué pasa con el contexto mientras desarrollamos. */}
+        {/* Bloque informativo sobre la sesión actual.
+           Esto sigue siendo útil mientras desarrollamos para ver qué dice el contexto. */}
         <div className="mt-4 text-xs text-slate-400">
           {user ? (
             <p>
