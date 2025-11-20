@@ -40,9 +40,26 @@ const app = express();
 // MIDDLEWARES BASE
 // -------------------------
 
-// Habilitamos CORS para permitir que el frontend (que en el futuro
-// podría estar en otro dominio) pueda hacer requests a esta API.
-app.use(cors());
+// MIDDLEWARES BASE  
+// -------------------------
+
+// Configuración de CORS (Cross-Origin Resource Sharing)
+// -----------------------------------------------------
+// En desarrollo, el frontend de NomadIQ corre en http://localhost:5173.
+// En producción, podemos configurar el origen permitido desde la variable
+// de entorno FRONTEND_ORIGIN para aceptar solo el dominio real.
+// Si FRONTEND_ORIGIN no está definida, usamos el origen de desarrollo
+// por defecto para que sea fácil levantar el proyecto en local.
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+
+app.use(
+  cors({
+    // Solo este origen tendrá encabezados CORS válidos en el navegador.
+    // Las herramientas como curl o Postman no se ven afectadas por CORS,
+    // así que seguirán funcionando normalmente para pruebas.
+    origin: FRONTEND_ORIGIN,
+  })
+);
 
 // Habilitamos el middleware que parsea automáticamente el cuerpo
 // de las peticiones JSON. El "limit" define el tamaño máximo permitido.
@@ -51,6 +68,7 @@ app.use(express.json({ limit: '1mb' }));
 // morgan es un logger HTTP que nos muestra en la consola
 // un resumen de cada request (método, ruta, tiempo, etc.).
 app.use(morgan('dev'));
+
 
 // Servimos archivos estáticos desde la carpeta de uploads.
 // Esto permite acceder a las imágenes por una URL pública como:
