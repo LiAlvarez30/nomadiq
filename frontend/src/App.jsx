@@ -17,6 +17,18 @@ import LoginPage from './pages/LoginPage.jsx';
 // La idea es que este Navbar se muestre en todas las pantallas.
 import Navbar from './components/Navbar.jsx';
 
+import TripsPage from "./pages/TripsPage.jsx";
+import PrivateRoute from "./routes/PrivateRoute.jsx";
+import ProfilePage from "./pages/ProfilePage";
+import DestinationsPage from './pages/DestinationsPage.jsx';
+import DestinationDetailPage from './pages/DestinationDetailPage.jsx';
+import CreateTripPage from './pages/CreateTripPage.jsx';
+import TripDetailPage from './pages/TripDetailPage.jsx';
+
+
+
+
+
 function App() {
   return (
     // Este div envuelve toda la aplicación visual.
@@ -41,12 +53,61 @@ function App() {
           {/* Ruta de login: pantalla donde el usuario puede iniciar sesión. */}
           <Route path="/login" element={<LoginPage />} />
 
+          {/* Ruta protegida: /trips */}
+          <Route 
+           path="/trips" 
+           element={
+            <PrivateRoute>
+              <TripsPage />
+            </PrivateRoute>
+           }
+          />
+
+          <Route
+            path="/trips/new"
+            element={
+            <PrivateRoute>
+              <CreateTripPage />
+            </PrivateRoute>
+            }
+          />
+
+         <Route
+            path="/trips/:id"
+            element={
+            <PrivateRoute>
+              <TripDetailPage />
+            </PrivateRoute>
+            }
+          />
+
+
+          <Route 
+           path="/profile" 
+           element={
+            <PrivateRoute>
+              <ProfilePage />
+            </PrivateRoute>
+           }
+          />
+
+          
+
+
+          {/* Nueva ruta pública para explorar destinos */}
+          <Route path="/destinations" element={<DestinationsPage />} />
+
+          {/* Nueva ruta de detalle de destino */}
+          <Route path="/destinations/:id" element={<DestinationDetailPage />} />
+
+
           {/* Más adelante podremos agregar:
               - /trips
               - /destinations
               - /itineraries
               - /admin
               etc. */}
+            
         </Routes>
       </main>
     </div>

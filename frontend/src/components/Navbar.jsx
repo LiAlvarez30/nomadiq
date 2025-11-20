@@ -1,48 +1,38 @@
 // src/components/Navbar.jsx
 
 // Este componente es la barra de navegación principal de NomadIQ.
-// Ahora ya no va a ser solo visual:
-// - Va a navegar entre rutas usando React Router.
-// - Va a leer el estado de autenticación (user) desde AuthContext
-//   para mostrar "Iniciar sesión" o "Cerrar sesión" según corresponda.
+// Acá resolvemos dos cosas importantes:
+// - Navegación entre pantallas usando React Router.
+// - Mostrar opciones distintas según haya o no sesión activa.
+//
+// El Navbar NO hace llamadas al backend directamente:
+// solo reacciona al estado de autenticación (AuthContext)
+// y usa enlaces internos (<Link>) para moverte entre rutas.
 
 import { useContext } from 'react';
 import { Link } from 'react-router-dom';
 
-// Importamos el contexto de autenticación.
-// Desde acá podremos saber si hay un usuario logueado (user)
-// y también llamar a logout() para cerrar la sesión.
+// Importamos el contexto de autenticación para saber:
+// - si hay un usuario logueado (user)
+// - y poder cerrar sesión (logout)
 import { AuthContext } from '../context/AuthContext.jsx';
 
 function Navbar() {
-  // ---------------------------------------------------
-  // Leemos el contexto de autenticación
-  // ---------------------------------------------------
-  //
-  // useContext(AuthContext) nos da el objeto authValue que definimos en
-  // AuthContext.jsx: { user, token, login, logout }.
-  //
-  // En el Navbar nos interesan:
-  // - user   → para mostrar el nombre del usuario si está logueado
-  // - logout → para poder cerrar sesión desde el botón del Navbar
+  // Leemos el contexto de autenticación.
+  // user  → nos sirve para mostrar "Hola, {nombre}"
+  // logout → para cerrar sesión desde el Navbar
   const { user, logout } = useContext(AuthContext);
 
-  // ---------------------------------------------------
-  // Función para manejar el clic en "Cerrar sesión"
-  // ---------------------------------------------------
+  // Función que se ejecuta cuando el usuario hace clic en "Cerrar sesión".
   const handleLogout = () => {
-    // Simplemente llamamos a logout() del contexto.
-    // Eso limpia:
+    // Esta llamada limpia:
     // - user y token en memoria,
-    // - y también localStorage (gracias a la lógica en AuthContext).
+    // - y también localStorage (según la lógica del AuthContext).
     logout();
-
-    // Podríamos agregar aquí un console.log para debug si queremos.
     console.log('Sesión cerrada desde el Navbar.');
   };
 
   return (
-    // Cabecera visual de la app.
     <header className="w-full border-b border-slate-800 bg-slate-950/80 backdrop-blur">
       <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between gap-4">
         {/* Sección izquierda: logo + nombre de la app */}
@@ -52,7 +42,7 @@ function Navbar() {
             NQ
           </div>
 
-          {/* Nombre y subtítulo */}
+          {/* Nombre y subtítulo de la app */}
           <div className="flex flex-col leading-tight">
             <span className="text-sm font-semibold text-slate-50">
               NomadIQ
@@ -73,28 +63,39 @@ function Navbar() {
             Inicio
           </Link>
 
-          {/* Estos enlaces todavía son solo visuales.
-             Más adelante los conectaremos con rutas reales (/destinations, /trips, etc.) */}
-          <button
-            type="button"
+          {/* Enlace real al explorador de destinos. La ruta /destinations es pública y mostrará el listado de lugares. */}
+          <Link
+            to="/destinations"
             className="hover:text-emerald-400 transition-colors"
           >
             Explorar destinos
-          </button>
-          <button
-            type="button"
+          </Link>
+
+          {/* "Mis viajes" es un enlace real a la ruta protegida /trips.
+             Si no hay sesión, PrivateRoute redirige a /login.
+             Si hay sesión, se muestra la página de viajes. */}
+          <Link
+            to="/trips"
             className="hover:text-emerald-400 transition-colors"
           >
             Mis viajes
-          </button>
+          </Link>
 
-          {/* ---------------------------------------------------
-             Bloque relacionado con la sesión del usuario
-             --------------------------------------------------- */}
+          {/* Link a Perfil:
+             - Solo tiene sentido si hay usuario logueado.
+             - Lo mostramos junto al resto de links de navegación. */}
+          {user && (
+            <Link
+              to="/profile"
+              className="hover:text-emerald-400 transition-colors"
+            >
+              Perfil
+            </Link>
+          )}
+
+          {/* Bloque de sesión: depende de si hay user o no */}
           {user ? (
-            // Si HAY un usuario logueado, mostramos:
-            // - un pequeño saludo con su nombre,
-            // - un botón para cerrar sesión.
+            // Si hay usuario logueado, mostramos un saludo + botón de logout.
             <div className="flex items-center gap-2">
               <span className="text-[11px] text-slate-400">
                 Hola,&nbsp;
